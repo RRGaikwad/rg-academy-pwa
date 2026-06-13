@@ -4,18 +4,17 @@ import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
 
-// TODO: Replace with your actual Firebase project configuration
 const firebaseConfig = {
-  apiKey: 'AIzaSyDummyKey-PleaseReplaceMe',
-  authDomain: 'rg-academy-app.firebaseapp.com',
-  projectId: 'rg-academy-app',
-  storageBucket: 'rg-academy-app.appspot.com',
-  messagingSenderId: '123456789012',
-  appId: '1:123456789012:web:abcdef1234567890',
+  apiKey: "AIzaSyBH-OGNr7fzGNDcxJ4nUsxxHrUFFBbPPTo",
+  authDomain: "rg-academy-pwa.firebaseapp.com",
+  projectId: "rg-academy-pwa",
+  storageBucket: "rg-academy-pwa.firebasestorage.app",
+  messagingSenderId: "34659803223",
+  appId: "1:34659803223:web:f022b0c1cd029a1ae70312"
 };
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
-export const functions = getFunctions(app);
+export const functions = getFunctions(app, 'asia-south1');

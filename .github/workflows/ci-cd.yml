@@ -73,8 +73,8 @@ jobs:
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
-          projectId: rg-academy-staging # Note: Update with your real staging project ID
-          channelId: live
+          projectId: rg-academy-pwa
+          channelId: staging
 
   lighthouse-ci:
     name: Lighthouse CI
@@ -118,5 +118,5 @@ jobs:
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
-          projectId: rg-academy-prod # Note: Update with your real prod project ID
+          projectId: rg-academy-pwa
           channelId: live
