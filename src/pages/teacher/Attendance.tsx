@@ -38,7 +38,8 @@ export function TeacherAttendance() {
   const { user } = useAuthStore();
   const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
   const { data: users, loading: usersLoading } = useFirestoreCollection<User>('users');
-  const { data: attendanceData, loading: attLoading } = useFirestoreCollection<AttendanceRecord>('attendance');
+  const { data: attendanceData, loading: attLoading } =
+    useFirestoreCollection<AttendanceRecord>('attendance');
 
   const myBatches = batches.filter((b) => b.teacherId === user?.uid);
   const [selectedBatch, setSelectedBatch] = useState('');
@@ -48,12 +49,15 @@ export function TeacherAttendance() {
 
   useEffect(() => {
     if (myBatches.length > 0 && !selectedBatch) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedBatch(myBatches[0].id);
     }
   }, [myBatches, selectedBatch]);
 
   const batch = batches.find((b) => b.id === selectedBatch);
-  const batchStudents = users.filter((s) => s.role === 'student' && batch?.studentIds.includes(s.uid));
+  const batchStudents = users.filter(
+    (s) => s.role === 'student' && batch?.studentIds.includes(s.uid),
+  );
 
   const existingRecord = attendanceData.find(
     (a) => a.batchId === selectedBatch && a.date === selectedDate,
@@ -61,6 +65,7 @@ export function TeacherAttendance() {
 
   useEffect(() => {
     if (existingRecord) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCurrentRecords(existingRecord.records);
     } else {
       const init: Record<string, AttendanceStatus> = {};
@@ -245,7 +250,7 @@ export function TeacherAttendance() {
                 );
               })}
               {batchStudents.length === 0 && (
-               <div className="px-4 py-8 text-center text-slate-400 text-sm">
+                <div className="px-4 py-8 text-center text-slate-400 text-sm">
                   No students enrolled in this batch.
                 </div>
               )}

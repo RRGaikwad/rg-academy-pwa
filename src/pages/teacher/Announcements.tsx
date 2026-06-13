@@ -18,7 +18,8 @@ import toast from 'react-hot-toast';
 export function TeacherAnnouncements() {
   const { user } = useAuthStore();
   const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
-  const { data: allAnnouncements, loading: annLoading } = useFirestoreCollection<Announcement>('announcements');
+  const { data: allAnnouncements, loading: annLoading } =
+    useFirestoreCollection<Announcement>('announcements');
 
   const myBatches = batches.filter((b) => b.teacherId === user?.uid);
   const announcements = allAnnouncements
@@ -32,6 +33,7 @@ export function TeacherAnnouncements() {
 
   useEffect(() => {
     if (modalOpen && !form.batchId && myBatches.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setForm((prev) => ({ ...prev, batchId: myBatches[0].id }));
     }
   }, [modalOpen, myBatches, form.batchId]);

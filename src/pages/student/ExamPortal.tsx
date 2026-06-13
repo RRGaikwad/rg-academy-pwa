@@ -66,7 +66,7 @@ export function StudentExamPortal() {
 
       try {
         toast.loading('Submitting exam...', { id: 'submit' });
-        
+
         // 1. Grade the exam locally
         let score = 0;
         activeExam.questions.forEach((q) => {
@@ -110,7 +110,7 @@ export function StudentExamPortal() {
           if (lbSnap.exists()) {
             const lb = lbSnap.data();
             const rankings = lb.rankings || [];
-            let entry = rankings.find((r: any) => r.studentId === user.uid);
+            const entry = rankings.find((r: any) => r.studentId === user.uid);
             if (entry) {
               entry.totalScore += score;
               entry.examsTaken += 1;
@@ -122,24 +122,26 @@ export function StudentExamPortal() {
                 studentName: user.name,
                 totalScore: score,
                 examsTaken: 1,
-                avgScore: score
+                avgScore: score,
               });
             }
             rankings.sort((a: any, b: any) => b.totalScore - a.totalScore);
-            rankings.forEach((r: any, idx: number) => r.rank = idx + 1);
+            rankings.forEach((r: any, idx: number) => (r.rank = idx + 1));
             await setDoc(lbRef, { ...lb, rankings, updatedAt: new Date().toISOString() });
           } else {
             await setDoc(lbRef, {
               batchId: activeExam.batchId,
               updatedAt: new Date().toISOString(),
-              rankings: [{
-                rank: 1,
-                studentId: user.uid,
-                studentName: user.name,
-                totalScore: score,
-                examsTaken: 1,
-                avgScore: score
-              }]
+              rankings: [
+                {
+                  rank: 1,
+                  studentId: user.uid,
+                  studentName: user.name,
+                  totalScore: score,
+                  examsTaken: 1,
+                  avgScore: score,
+                },
+              ],
             });
           }
         } catch (lbErr) {

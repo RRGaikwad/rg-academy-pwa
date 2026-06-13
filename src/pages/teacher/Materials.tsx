@@ -29,11 +29,13 @@ const fileTypeConfig = {
 export function TeacherMaterials() {
   const { user } = useAuthStore();
   const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
-  const { data: allMaterials, loading: materialsLoading } = useFirestoreCollection<Material>('materials');
+  const { data: allMaterials, loading: materialsLoading } =
+    useFirestoreCollection<Material>('materials');
 
   const myBatches = batches.filter((b) => b.teacherId === user?.uid);
-  const materials = allMaterials.filter((m) => m.uploadedBy === user?.uid)
-    .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const materials = allMaterials
+    .filter((m) => m.uploadedBy === user?.uid)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({
@@ -48,6 +50,7 @@ export function TeacherMaterials() {
 
   useEffect(() => {
     if (myBatches.length > 0 && !form.batchId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setForm((prev) => ({ ...prev, batchId: myBatches[0].id }));
     }
   }, [myBatches, form.batchId]);
@@ -142,7 +145,7 @@ export function TeacherMaterials() {
             const batch = batches.find((b) => b.id === mat.batchId);
             const ftc = fileTypeConfig[mat.fileType];
             return (
-              <Card key={mat.uid}>
+              <Card key={mat.id}>
                 <div className="flex items-start gap-3">
                   <div
                     className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${ftc.bg} ${ftc.color}`}
@@ -160,7 +163,7 @@ export function TeacherMaterials() {
                         )}
                       </div>
                       <button
-                        onClick={() => deleteMaterial(mat.uid)}
+                        onClick={() => deleteMaterial(mat.id)}
                         className="p-1 text-slate-400 hover:text-red-500 flex-shrink-0 transition-colors"
                       >
                         <Trash2 size={14} />

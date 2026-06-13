@@ -186,6 +186,7 @@ export interface Leaderboard {
 }
 
 export interface AttendanceRecord {
+  id: string;
   batchId: string;
   date: string;
   markedBy: string;

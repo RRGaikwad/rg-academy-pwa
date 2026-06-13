@@ -14,7 +14,8 @@ import toast from 'react-hot-toast';
 export function StudentNotifications() {
   const { user } = useAuthStore();
   const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
-  const { data: annData, loading: annLoading } = useFirestoreCollection<Announcement>('announcements');
+  const { data: annData, loading: annLoading } =
+    useFirestoreCollection<Announcement>('announcements');
 
   const loading = batchesLoading || annLoading;
 
@@ -22,12 +23,15 @@ export function StudentNotifications() {
 
   useEffect(() => {
     if (annData) {
-      const filtered = annData.filter((a) => {
-        const accessible = a.scope === 'institute' || (a.batchId && user?.batchIds?.includes(a.batchId));
-        const targeted = a.targetRole === 'all' || a.targetRole === 'students';
-        return accessible && targeted;
-      }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      
+      const filtered = annData
+        .filter((a) => {
+          const accessible =
+            a.scope === 'institute' || (a.batchId && user?.batchIds?.includes(a.batchId));
+          const targeted = a.targetRole === 'all' || a.targetRole === 'students';
+          return accessible && targeted;
+        })
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnnouncements(filtered);
     }
   }, [annData, user]);
@@ -53,7 +57,7 @@ export function StudentNotifications() {
       await updateDoc(annRef, {
         readBy: [...ann.readBy, user?.uid],
       });
-    } catch (error) {
+    } catch {
       toast.error('Failed to mark as read');
     }
   };
@@ -62,7 +66,7 @@ export function StudentNotifications() {
     try {
       toast.loading('Marking all as read...', { id: 'markAll' });
       const unreadAnns = announcements.filter((a) => !a.readBy.includes(user?.uid || ''));
-      
+
       for (const ann of unreadAnns) {
         const annRef = doc(db, 'announcements', ann.id);
         await updateDoc(annRef, {
@@ -70,7 +74,7 @@ export function StudentNotifications() {
         });
       }
       toast.success('All notifications marked as read', { id: 'markAll' });
-    } catch (error) {
+    } catch {
       toast.error('Failed to mark all as read', { id: 'markAll' });
     }
   };

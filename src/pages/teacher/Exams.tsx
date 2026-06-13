@@ -33,7 +33,8 @@ export function TeacherExams() {
   const { user } = useAuthStore();
   const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
   const { data: exams, loading: examsLoading } = useFirestoreCollection<Exam>('exams');
-  const { data: submissions, loading: subLoading } = useFirestoreCollection<Submission>('examSubmissions');
+  const { data: submissions, loading: subLoading } =
+    useFirestoreCollection<Submission>('examSubmissions');
   const { data: users, loading: usersLoading } = useFirestoreCollection<User>('users');
 
   const myBatches = batches.filter((b) => b.teacherId === user?.uid);
@@ -55,6 +56,7 @@ export function TeacherExams() {
 
   useEffect(() => {
     if (myBatches.length > 0 && !newExam.batchId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setNewExam((prev) => ({ ...prev, batchId: myBatches[0].id }));
     }
   }, [myBatches, newExam.batchId]);
@@ -122,7 +124,10 @@ export function TeacherExams() {
         questions: [],
       });
       setActiveTab('list');
-      toast.success(`Exam ${status === 'published' ? 'published' : 'saved as draft'} successfully!`, { id: toastId });
+      toast.success(
+        `Exam ${status === 'published' ? 'published' : 'saved as draft'} successfully!`,
+        { id: toastId },
+      );
     } catch (error) {
       console.error(error);
       toast.error('Failed to save exam', { id: toastId });
@@ -130,13 +135,16 @@ export function TeacherExams() {
   };
 
   const updateExamStatus = async (examId: string, newStatus: ExamStatus) => {
-    const exam = exams.find(e => e.id === examId);
+    const exam = exams.find((e) => e.id === examId);
     if (!exam) return;
     const toastId = toast.loading('Updating exam status...');
     try {
       await updateDoc(doc(db, 'exams', examId), {
         status: newStatus,
-        publishedAt: newStatus === 'published' ? (exam.publishedAt || new Date().toISOString()) : exam.publishedAt,
+        publishedAt:
+          newStatus === 'published'
+            ? exam.publishedAt || new Date().toISOString()
+            : exam.publishedAt,
         closedAt: newStatus === 'closed' ? new Date().toISOString() : exam.closedAt,
       });
       toast.success(`Exam ${newStatus}`, { id: toastId });
@@ -503,8 +511,7 @@ export function TeacherExams() {
           (() => {
             const subs = getSubmissions(resultsExam.id);
             const chartData = subs.map((s) => ({
-              name:
-                users.find((st) => st.uid === s.studentId)?.name.split(' ')[0] || 'Unknown',
+              name: users.find((st) => st.uid === s.studentId)?.name.split(' ')[0] || 'Unknown',
               score: s.score || 0,
             }));
             return (

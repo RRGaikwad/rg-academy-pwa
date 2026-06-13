@@ -11,7 +11,6 @@ import {
   Clock,
   CheckCircle,
   AlertTriangle,
-  Database,
 } from 'lucide-react';
 import {
   BarChart,
@@ -28,7 +27,6 @@ import { format } from 'date-fns';
 import { useFirestoreCollection } from '../../hooks/useFirestore';
 import { db } from '../../firebase/config';
 import { doc, updateDoc } from 'firebase/firestore';
-import { Button } from '../../components/shared/Button';
 import type { Student, Teacher, Batch, FeeRecord, Exam, Announcement } from '../../types';
 
 const feeChartData = [
@@ -100,9 +98,9 @@ export function AdminDashboard() {
               changedAt: now,
               changedBy: 'system',
               note: 'Auto-marked overdue by client-side check',
-            }
-          ]
-        }).catch(err => console.error("Failed to mark fee overdue:", err));
+            },
+          ],
+        }).catch((err) => console.error('Failed to mark fee overdue:', err));
       }
     });
   }, [fees, fLoading]);

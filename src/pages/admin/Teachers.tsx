@@ -17,7 +17,7 @@ import toast from 'react-hot-toast';
 export function AdminTeachers() {
   const { data: teachers, loading: loadingTeachers } = useFirestoreCollection<Teacher>('teachers');
   const { data: batches } = useFirestoreCollection<Batch>('batches');
-  
+
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editTeacher, setEditTeacher] = useState<Teacher | null>(null);
@@ -64,9 +64,12 @@ export function AdminTeachers() {
     }
     const tId = toast.loading(editTeacher ? 'Updating...' : 'Creating...');
     try {
-      if (editTeacher && (editTeacher.id || editTeacher.uid)) {
-        await updateDoc(doc(db, 'teachers', editTeacher.id || editTeacher.uid!), {
-          name: form.name, email: form.email, phone: form.phone, subject: form.subject 
+      if (editTeacher && editTeacher.uid) {
+        await updateDoc(doc(db, 'teachers', editTeacher.uid), {
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          subject: form.subject,
         });
         toast.success('Teacher updated', { id: tId });
       } else {
@@ -90,10 +93,10 @@ export function AdminTeachers() {
   };
 
   const toggleActive = async (teacher: Teacher) => {
-    if (!teacher.id && !teacher.uid) return;
+    if (!teacher.uid) return;
     const tId = toast.loading('Updating status...');
     try {
-      await updateDoc(doc(db, 'teachers', teacher.id || teacher.uid!), { isActive: !teacher.isActive });
+      await updateDoc(doc(db, 'teachers', teacher.uid), { isActive: !teacher.isActive });
       toast.success('Teacher status updated', { id: tId });
     } catch (err: any) {
       toast.error(err.message || 'Failed to update', { id: tId });
@@ -122,7 +125,9 @@ export function AdminTeachers() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {loadingTeachers ? (
-          <div className="col-span-3 flex justify-center p-8"><p className="text-slate-500">Loading...</p></div>
+          <div className="col-span-3 flex justify-center p-8">
+            <p className="text-slate-500">Loading...</p>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="col-span-3">
             <EmptyState
@@ -137,9 +142,11 @@ export function AdminTeachers() {
           </div>
         ) : (
           filtered.map((teacher) => {
-            const teacherBatches = batches.filter((b) => (teacher.batchIds || []).includes(b.id || ''));
+            const teacherBatches = batches.filter((b) =>
+              (teacher.batchIds || []).includes(b.id || ''),
+            );
             return (
-              <Card key={teacher.uid || teacher.id} hoverable>
+              <Card key={teacher.uid} hoverable>
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center text-white font-bold text-lg">
@@ -203,7 +210,10 @@ export function AdminTeachers() {
                 </div>
 
                 <div className="mt-2 text-xs text-slate-400">
-                  Joined {teacher.createdAt ? format(new Date(teacher.createdAt), 'MMM d, yyyy') : 'Unknown'}
+                  Joined{' '}
+                  {teacher.createdAt
+                    ? format(new Date(teacher.createdAt), 'MMM d, yyyy')
+                    : 'Unknown'}
                 </div>
               </Card>
             );
