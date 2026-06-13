@@ -26,6 +26,8 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { doc, updateDoc } from 'firebase/firestore';
 import { Button } from '../../components/shared/Button';
 import type { Student, Teacher, Batch, FeeRecord, Exam, Announcement } from '../../types';
 
@@ -81,6 +83,29 @@ export function AdminDashboard() {
       totalFeeAmount: totalAmount,
     });
   }, [students, teachers, batches, fees, sLoading, tLoading, bLoading, fLoading]);
+
+  // Client-side Overdue Fees Check (Replaces Cloud Function)
+  useEffect(() => {
+    if (fLoading || fees.length === 0) return;
+    const now = new Date().toISOString();
+    fees.forEach((fee) => {
+      if (fee.status === 'pending' && fee.dueDate < now) {
+        updateDoc(doc(db, 'fees', fee.id), {
+          status: 'overdue',
+          history: [
+            ...fee.history,
+            {
+              fromStatus: 'pending',
+              toStatus: 'overdue',
+              changedAt: now,
+              changedBy: 'system',
+              note: 'Auto-marked overdue by client-side check',
+            }
+          ]
+        }).catch(err => console.error("Failed to mark fee overdue:", err));
+      }
+    });
+  }, [fees, fLoading]);
 
   const pieData = [
     { name: 'Paid', value: stats.paidFees },

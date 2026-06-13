@@ -7,8 +7,8 @@ import { EmptyState } from '../../components/shared/EmptyState';
 import { Modal } from '../../components/shared/Modal';
 import { useAuthStore } from '../../store/authStore';
 import { useFirestoreCollection } from '../../hooks/useFirestore';
-import { functions } from '../../firebase/config';
-import { httpsCallable } from 'firebase/functions';
+import { db } from '../../firebase/config';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import type { Exam, Submission, Batch } from '../../types';
 import {
   Clock,
@@ -64,23 +64,27 @@ export function StudentExamPortal() {
       if (timerRef.current) clearInterval(timerRef.current);
       if (draftRef.current) clearInterval(draftRef.current);
 
-      const gradeExamFn = httpsCallable(functions, 'gradeExamSubmission');
       try {
         toast.loading('Submitting exam...', { id: 'submit' });
-        const res = await gradeExamFn({
-          examId: activeExam.id,
-          answers,
-          timeTakenSecs: activeExam.durationMins * 60 - Math.max(0, timeLeft),
-          anticheatFlags,
+        
+        // 1. Grade the exam locally
+        let score = 0;
+        activeExam.questions.forEach((q) => {
+          const studentAns = answers[q.id];
+          if (studentAns !== undefined && studentAns !== null) {
+            if (studentAns === q.correctIdx) {
+              score += activeExam.marksPerQ;
+            } else {
+              score -= activeExam.negativeMarks;
+            }
+          }
         });
-        const data = res.data as { submissionId: string; score: number };
 
-        toast.success(auto ? 'Time up! Exam auto-submitted.' : 'Exam submitted successfully!', {
-          id: 'submit',
-        });
+        const submissionId = `sub_${Date.now()}_${user.uid}`;
+        const timeTaken = activeExam.durationMins * 60 - Math.max(0, timeLeft);
 
-        setResultSub({
-          id: data.submissionId,
+        const subData: Submission = {
+          id: submissionId,
           examId: activeExam.id,
           studentId: user.uid,
           batchId: activeExam.batchId,
@@ -89,12 +93,64 @@ export function StudentExamPortal() {
           draftSavedAt: new Date().toISOString(),
           submittedAt: new Date().toISOString(),
           gradedAt: new Date().toISOString(),
-          score: data.score,
+          score,
           totalMarks: activeExam.totalMarks,
-          timeTakenSecs: activeExam.durationMins * 60 - Math.max(0, timeLeft),
+          timeTakenSecs: timeTaken,
           anticheatFlags,
           createdAt: new Date().toISOString(),
+        };
+
+        // 2. Save Submission to Firestore
+        await setDoc(doc(db, 'submissions', submissionId), subData);
+
+        // 3. Update Leaderboard
+        try {
+          const lbRef = doc(db, 'leaderboards', activeExam.batchId);
+          const lbSnap = await getDoc(lbRef);
+          if (lbSnap.exists()) {
+            const lb = lbSnap.data();
+            const rankings = lb.rankings || [];
+            let entry = rankings.find((r: any) => r.studentId === user.uid);
+            if (entry) {
+              entry.totalScore += score;
+              entry.examsTaken += 1;
+              entry.avgScore = entry.totalScore / entry.examsTaken;
+            } else {
+              rankings.push({
+                rank: 0,
+                studentId: user.uid,
+                studentName: user.name,
+                totalScore: score,
+                examsTaken: 1,
+                avgScore: score
+              });
+            }
+            rankings.sort((a: any, b: any) => b.totalScore - a.totalScore);
+            rankings.forEach((r: any, idx: number) => r.rank = idx + 1);
+            await setDoc(lbRef, { ...lb, rankings, updatedAt: new Date().toISOString() });
+          } else {
+            await setDoc(lbRef, {
+              batchId: activeExam.batchId,
+              updatedAt: new Date().toISOString(),
+              rankings: [{
+                rank: 1,
+                studentId: user.uid,
+                studentName: user.name,
+                totalScore: score,
+                examsTaken: 1,
+                avgScore: score
+              }]
+            });
+          }
+        } catch (lbErr) {
+          console.error('Failed to update leaderboard', lbErr);
+        }
+
+        toast.success(auto ? 'Time up! Exam auto-submitted.' : 'Exam submitted successfully!', {
+          id: 'submit',
         });
+
+        setResultSub(subData);
         setView('result');
         setConfirmSubmit(false);
       } catch (err) {
