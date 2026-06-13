@@ -1,5 +1,6 @@
 import { onIdTokenChanged, User as FirebaseUser } from 'firebase/auth';
-import { auth } from './config';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from './config';
 import { useAuthStore } from '../store/authStore';
 import { Role, User } from '../types';
 
@@ -10,15 +11,23 @@ export function setupAuthListener() {
 
     if (firebaseUser) {
       try {
-        const idTokenResult = await firebaseUser.getIdTokenResult();
-        // Extract role and instituteId from custom claims
-        // In a real app, the Cloud Function sets these. For now, we fallback to defaults.
-        const role = (idTokenResult.claims.role as Role) || 'student';
-        const instituteId = (idTokenResult.claims.instituteId as string) || 'rg_academy_id';
+        let role: Role = 'student';
+        let instituteId = 'rg_academy_id';
+        let name = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User';
+
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          role = (userData.role as Role) || 'student';
+          instituteId = userData.instituteId || 'rg_academy_id';
+          name = userData.name || name;
+        }
 
         const user: User = {
           uid: firebaseUser.uid,
-          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+          name: name,
           email: firebaseUser.email || '',
           role: role,
           instituteId: instituteId,
