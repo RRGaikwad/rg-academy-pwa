@@ -1,0 +1,122 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Type Check
+        run: npx tsc --noEmit
+
+  build:
+    name: Build PWA
+    needs: lint-and-typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Vite Build
+        run: npm run build
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: dist
+          path: dist/
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          projectId: rg-academy-staging # Note: Update with your real staging project ID
+          channelId: live
+
+  lighthouse-ci:
+    name: Lighthouse CI
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install Lighthouse CI
+        run: npm install -g @lhci/cli@0.12.x
+
+      - name: Run Lighthouse
+        run: |
+          # Note: Replace with your actual deployed staging URL
+          lhci autorun --collect.url="https://rg-academy-staging.web.app" --assert.assertions.categories:performance=warn --assert.assertions.categories:pwa=warn --assert.assertions.categories:accessibility=warn
+
+  deploy-prod:
+    name: Deploy to Production
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: dist
+          path: dist/
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          projectId: rg-academy-prod # Note: Update with your real prod project ID
+          channelId: live
