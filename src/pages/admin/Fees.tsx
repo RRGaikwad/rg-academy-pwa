@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState } from 'react';
 import { AppLayout } from '../../layouts/AppLayout';
 import { Card } from '../../components/shared/Card';
@@ -14,8 +15,10 @@ import {
   ChevronUp,
   History,
 } from 'lucide-react';
-import { mockFees as initFees, mockStudents, mockBatches } from '../../data/mockData';
-import type { FeeRecord, FeeStatus } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { doc, updateDoc } from 'firebase/firestore';
+import type { FeeRecord, FeeStatus, Student, Batch } from '../../types';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -29,7 +32,10 @@ const statusConfig: Record<
 };
 
 export function AdminFees() {
-  const [fees, setFees] = useState<FeeRecord[]>(initFees);
+  const { data: fees, loading: loadingFees } = useFirestoreCollection<FeeRecord>('fees');
+  const { data: students } = useFirestoreCollection<Student>('students');
+  const { data: batches } = useFirestoreCollection<Batch>('batches');
+  
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [expandedFee, setExpandedFee] = useState<string | null>(null);
@@ -39,8 +45,8 @@ export function AdminFees() {
 
   const enriched = fees.map((fee) => ({
     ...fee,
-    studentName: mockStudents.find((s) => s.uid === fee.studentId)?.name || 'Unknown',
-    batchName: mockBatches.find((b) => b.id === fee.batchId)?.name || 'Unknown',
+    studentName: students.find((s) => s.uid === fee.studentId || s.uid === fee.studentId)?.name || 'Unknown',
+    batchName: batches.find((b) => b.id === fee.batchId)?.name || 'Unknown',
   }));
 
   const filtered = enriched.filter((f) => {
@@ -59,13 +65,12 @@ export function AdminFees() {
     totalDue: fees.filter((f) => f.status !== 'paid').reduce((s, f) => s + f.amount, 0),
   };
 
-  const handleStatusUpdate = () => {
-    if (!updateModal) return;
-    const updatedFee: FeeRecord = {
-      ...updateModal,
-      status: newStatus,
-      history: [
-        ...updateModal.history,
+  const handleStatusUpdate = async () => {
+    if (!updateModal || !updateModal.id) return;
+    const tId = toast.loading('Updating...');
+    try {
+      const updatedHistory = [
+        ...(updateModal.history || []),
         {
           changedAt: new Date().toISOString(),
           changedBy: 'admin_001',
@@ -73,12 +78,17 @@ export function AdminFees() {
           toStatus: newStatus,
           note: updateNote || null,
         },
-      ],
-    };
-    setFees((prev) => prev.map((f) => (f.id === updateModal.id ? updatedFee : f)));
-    setUpdateModal(null);
-    setUpdateNote('');
-    toast.success('Fee status updated');
+      ];
+      await updateDoc(doc(db, 'fees', updateModal.id), {
+        status: newStatus,
+        history: updatedHistory
+      });
+      toast.success('Fee status updated', { id: tId });
+      setUpdateModal(null);
+      setUpdateNote('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update', { id: tId });
+    }
   };
 
   return (
@@ -151,136 +161,140 @@ export function AdminFees() {
 
       {/* Fee Records */}
       <Card padding="none">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50">
-                <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                  Student
-                </th>
-                <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden md:table-cell">
-                  Label
-                </th>
-                <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden lg:table-cell">
-                  Due Date
-                </th>
-                <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                  Amount
-                </th>
-                <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                  Status
-                </th>
-                <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filtered.map((fee) => {
-                const sc = statusConfig[fee.status];
-                const isExpanded = expandedFee === fee.id;
-                return (
-                  <>
-                    <tr key={fee.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-semibold text-xs flex-shrink-0">
-                            {fee.studentName.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="font-medium text-slate-900">{fee.studentName}</p>
-                            <p className="text-xs text-slate-500 hidden sm:block">
-                              {fee.batchName?.split('—')[0].trim()}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 hidden md:table-cell">{fee.label}</td>
-                      <td className="py-3 px-4 text-slate-600 hidden lg:table-cell">
-                        {format(new Date(fee.dueDate), 'MMM d, yyyy')}
-                      </td>
-                      <td className="py-3 px-4 text-right font-semibold text-slate-900">
-                        ₹{fee.amount.toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <Badge
-                          variant={sc.variant}
-                          size="sm"
-                          className="inline-flex items-center gap-1"
-                        >
-                          {sc.icon}
-                          {sc.label}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => {
-                              setUpdateModal(fee);
-                              setNewStatus(fee.status === 'paid' ? 'pending' : 'paid');
-                            }}
-                            className="p-1.5 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 rounded-lg transition-colors"
-                            title="Update Status"
-                          >
-                            <CheckCircle size={15} />
-                          </button>
-                          <button
-                            onClick={() => setExpandedFee(isExpanded ? null : fee.id)}
-                            className="p-1.5 hover:bg-slate-100 text-slate-400 rounded-lg transition-colors"
-                            title="History"
-                          >
-                            {isExpanded ? <ChevronUp size={15} /> : <History size={15} />}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr key={`${fee.id}-history`} className="bg-slate-50">
-                        <td colSpan={6} className="px-4 py-3">
-                          <p className="text-xs font-semibold text-slate-500 uppercase mb-2">
-                            Audit History
-                          </p>
-                          {fee.history.length === 0 ? (
-                            <p className="text-xs text-slate-400">No history yet.</p>
-                          ) : (
-                            <div className="space-y-1.5">
-                              {fee.history.map((h, i) => (
-                                <div
-                                  key={i}
-                                  className="flex items-center gap-2 text-xs text-slate-600"
-                                >
-                                  <span className="text-slate-400">
-                                    {format(new Date(h.changedAt), 'MMM d, yyyy HH:mm')}
-                                  </span>
-                                  <span className="text-slate-400">→</span>
-                                  <Badge
-                                    variant={
-                                      h.toStatus === 'paid'
-                                        ? 'success'
-                                        : h.toStatus === 'overdue'
-                                          ? 'danger'
-                                          : 'warning'
-                                    }
-                                    size="sm"
-                                  >
-                                    {h.toStatus}
-                                  </Badge>
-                                  {h.note && (
-                                    <span className="text-slate-500 italic">"{h.note}"</span>
-                                  )}
-                                </div>
-                              ))}
+        {loadingFees ? (
+          <div className="flex justify-center p-8"><p className="text-slate-500">Loading...</p></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Student
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden md:table-cell">
+                    Label
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide hidden lg:table-cell">
+                    Due Date
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Amount
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Status
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.map((fee) => {
+                  const sc = statusConfig[fee.status];
+                  const isExpanded = expandedFee === fee.id;
+                  return (
+                    <React.Fragment key={fee.id}>
+                      <tr className="hover:bg-slate-50 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-semibold text-xs flex-shrink-0">
+                              {fee.studentName.charAt(0)}
                             </div>
-                          )}
+                            <div>
+                              <p className="font-medium text-slate-900">{fee.studentName}</p>
+                              <p className="text-xs text-slate-500 hidden sm:block">
+                                {fee.batchName?.split('—')[0].trim()}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 hidden md:table-cell">{fee.label}</td>
+                        <td className="py-3 px-4 text-slate-600 hidden lg:table-cell">
+                          {fee.dueDate ? format(new Date(fee.dueDate), 'MMM d, yyyy') : 'Unknown'}
+                        </td>
+                        <td className="py-3 px-4 text-right font-semibold text-slate-900">
+                          ₹{fee.amount.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <Badge
+                            variant={sc.variant}
+                            size="sm"
+                            className="inline-flex items-center gap-1"
+                          >
+                            {sc.icon}
+                            {sc.label}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => {
+                                setUpdateModal(fee);
+                                setNewStatus(fee.status === 'paid' ? 'pending' : 'paid');
+                              }}
+                              className="p-1.5 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 rounded-lg transition-colors"
+                              title="Update Status"
+                            >
+                              <CheckCircle size={15} />
+                            </button>
+                            <button
+                              onClick={() => setExpandedFee(isExpanded ? null : fee.id || null)}
+                              className="p-1.5 hover:bg-slate-100 text-slate-400 rounded-lg transition-colors"
+                              title="History"
+                            >
+                              {isExpanded ? <ChevronUp size={15} /> : <History size={15} />}
+                            </button>
+                          </div>
                         </td>
                       </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      {isExpanded && (
+                        <tr key={`${fee.id}-history`} className="bg-slate-50">
+                          <td colSpan={6} className="px-4 py-3">
+                            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">
+                              Audit History
+                            </p>
+                            {(!fee.history || fee.history.length === 0) ? (
+                              <p className="text-xs text-slate-400">No history yet.</p>
+                            ) : (
+                              <div className="space-y-1.5">
+                                {fee.history.map((h, i) => (
+                                  <div
+                                    key={i}
+                                    className="flex items-center gap-2 text-xs text-slate-600"
+                                  >
+                                    <span className="text-slate-400">
+                                      {format(new Date(h.changedAt), 'MMM d, yyyy HH:mm')}
+                                    </span>
+                                    <span className="text-slate-400">→</span>
+                                    <Badge
+                                      variant={
+                                        h.toStatus === 'paid'
+                                          ? 'success'
+                                          : h.toStatus === 'overdue'
+                                            ? 'danger'
+                                            : 'warning'
+                                      }
+                                      size="sm"
+                                    >
+                                      {h.toStatus}
+                                    </Badge>
+                                    {h.note && (
+                                      <span className="text-slate-500 italic">"{h.note}"</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {/* Update Status Modal */}
@@ -301,7 +315,7 @@ export function AdminFees() {
         {updateModal && (
           <div className="space-y-4">
             <div className="p-3 bg-slate-50 rounded-lg text-sm">
-              <p className="font-medium text-slate-900">{updateModal.studentName}</p>
+              <p className="font-medium text-slate-900">{(updateModal as any).studentName}</p>
               <p className="text-slate-500">{updateModal.label}</p>
               <p className="font-semibold text-slate-900 mt-1">
                 ₹{updateModal.amount.toLocaleString()}

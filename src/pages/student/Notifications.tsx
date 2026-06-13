@@ -1,46 +1,78 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppLayout } from '../../layouts/AppLayout';
 import { Card } from '../../components/shared/Card';
 import { Badge } from '../../components/shared/Badge';
 import { useAuthStore } from '../../store/authStore';
-import { mockAnnouncements as initAnn, mockBatches } from '../../data/mockData';
-import type { Announcement } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { doc, updateDoc } from 'firebase/firestore';
+import type { Announcement, Batch } from '../../types';
 import { format } from 'date-fns';
-import { Bell, CheckCheck, Globe, BookOpen, Megaphone } from 'lucide-react';
+import { Bell, CheckCheck, Globe, BookOpen, Megaphone, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export function StudentNotifications() {
   const { user } = useAuthStore();
-  const [announcements, setAnnouncements] = useState<Announcement[]>(
-    initAnn
-      .filter((a) => {
-        const accessible =
-          a.scope === 'institute' || (a.batchId && user?.batchIds?.includes(a.batchId));
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: annData, loading: annLoading } = useFirestoreCollection<Announcement>('announcements');
+
+  const loading = batchesLoading || annLoading;
+
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+
+  useEffect(() => {
+    if (annData) {
+      const filtered = annData.filter((a) => {
+        const accessible = a.scope === 'institute' || (a.batchId && user?.batchIds?.includes(a.batchId));
         const targeted = a.targetRole === 'all' || a.targetRole === 'students';
         return accessible && targeted;
-      })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-  );
+      }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      setAnnouncements(filtered);
+    }
+  }, [annData, user]);
+
+  if (loading) {
+    return (
+      <AppLayout role="student" title="Notifications">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+        </div>
+      </AppLayout>
+    );
+  }
 
   const unread = announcements.filter((a) => !a.readBy.includes(user?.uid || '')).length;
 
-  const markRead = (id: string) => {
-    setAnnouncements((prev) =>
-      prev.map((a) =>
-        a.id === id && !a.readBy.includes(user?.uid || '')
-          ? { ...a, readBy: [...a.readBy, user?.uid || ''] }
-          : a,
-      ),
-    );
+  const markRead = async (id: string) => {
+    const ann = announcements.find((a) => a.id === id);
+    if (!ann || ann.readBy.includes(user?.uid || '')) return;
+
+    try {
+      const annRef = doc(db, 'announcements', id);
+      await updateDoc(annRef, {
+        readBy: [...ann.readBy, user?.uid],
+      });
+    } catch (error) {
+      toast.error('Failed to mark as read');
+    }
   };
 
-  const markAllRead = () => {
-    setAnnouncements((prev) =>
-      prev.map((a) =>
-        a.readBy.includes(user?.uid || '') ? a : { ...a, readBy: [...a.readBy, user?.uid || ''] },
-      ),
-    );
-    toast.success('All notifications marked as read');
+  const markAllRead = async () => {
+    try {
+      toast.loading('Marking all as read...', { id: 'markAll' });
+      const unreadAnns = announcements.filter((a) => !a.readBy.includes(user?.uid || ''));
+      
+      for (const ann of unreadAnns) {
+        const annRef = doc(db, 'announcements', ann.id);
+        await updateDoc(annRef, {
+          readBy: [...ann.readBy, user?.uid],
+        });
+      }
+      toast.success('All notifications marked as read', { id: 'markAll' });
+    } catch (error) {
+      toast.error('Failed to mark all as read', { id: 'markAll' });
+    }
   };
 
   return (
@@ -73,7 +105,7 @@ export function StudentNotifications() {
       ) : (
         <div className="space-y-3">
           {announcements.map((ann) => {
-            const batch = ann.batchId ? mockBatches.find((b) => b.id === ann.batchId) : null;
+            const batch = ann.batchId ? batches.find((b) => b.id === ann.batchId) : null;
             const isUnread = !ann.readBy.includes(user?.uid || '');
             return (
               <Card

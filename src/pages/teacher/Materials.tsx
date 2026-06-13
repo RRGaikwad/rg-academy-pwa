@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppLayout } from '../../layouts/AppLayout';
 import { Card } from '../../components/shared/Card';
 import { Button } from '../../components/shared/Button';
@@ -7,10 +7,12 @@ import { Input, Textarea, Select } from '../../components/shared/Input';
 import { Modal } from '../../components/shared/Modal';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { useAuthStore } from '../../store/authStore';
-import { mockBatches, mockMaterials as initMaterials } from '../../data/mockData';
-import type { Material, MaterialFileType } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { collection, addDoc, doc, deleteDoc } from 'firebase/firestore';
+import type { Material, MaterialFileType, Batch } from '../../types';
 import { format } from 'date-fns';
-import { Plus, FileText, Link, Image, Download, Trash2, BookMarked } from 'lucide-react';
+import { Plus, FileText, Link, Image, Download, Trash2, BookMarked, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const fileTypeConfig = {
@@ -26,61 +28,93 @@ const fileTypeConfig = {
 
 export function TeacherMaterials() {
   const { user } = useAuthStore();
-  const myBatches = mockBatches.filter((b) => b.teacherId === user?.uid);
-  const [materials, setMaterials] = useState<Material[]>(
-    initMaterials.filter((m) => m.uploadedBy === user?.uid),
-  );
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: allMaterials, loading: materialsLoading } = useFirestoreCollection<Material>('materials');
+
+  const myBatches = batches.filter((b) => b.teacherId === user?.uid);
+  const materials = allMaterials.filter((m) => m.uploadedBy === user?.uid)
+    .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({
     title: '',
     description: '',
     fileUrl: '',
     fileType: 'pdf' as MaterialFileType,
-    batchId: myBatches[0]?.id || '',
+    batchId: '',
     subject: '',
     tags: '',
   });
 
-  const handleSubmit = () => {
+  useEffect(() => {
+    if (myBatches.length > 0 && !form.batchId) {
+      setForm((prev) => ({ ...prev, batchId: myBatches[0].id }));
+    }
+  }, [myBatches, form.batchId]);
+
+  const handleSubmit = async () => {
     if (!form.title || !form.fileUrl || !form.batchId) {
       toast.error('Please fill all required fields');
       return;
     }
-    const mat: Material = {
-      id: `mat_${Date.now()}`,
-      title: form.title,
-      description: form.description || null,
-      fileUrl: form.fileUrl,
-      fileType: form.fileType,
-      scope: 'batch',
-      batchId: form.batchId,
-      uploadedBy: user?.uid || '',
-      uploadedByRole: 'teacher',
-      subject: form.subject || null,
-      tags: form.tags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean),
-      createdAt: new Date().toISOString(),
-    };
-    setMaterials((prev) => [mat, ...prev]);
-    setModalOpen(false);
-    setForm({
-      title: '',
-      description: '',
-      fileUrl: '',
-      fileType: 'pdf',
-      batchId: myBatches[0]?.id || '',
-      subject: '',
-      tags: '',
-    });
-    toast.success('Material uploaded successfully');
+    const toastId = toast.loading('Uploading material...');
+    try {
+      const matData: Omit<Material, 'id'> = {
+        title: form.title,
+        description: form.description || null,
+        fileUrl: form.fileUrl,
+        fileType: form.fileType,
+        scope: 'batch',
+        batchId: form.batchId,
+        uploadedBy: user?.uid || '',
+        uploadedByRole: 'teacher',
+        subject: form.subject || null,
+        tags: form.tags
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
+        createdAt: new Date().toISOString(),
+      };
+      await addDoc(collection(db, 'materials'), matData);
+      setModalOpen(false);
+      setForm({
+        title: '',
+        description: '',
+        fileUrl: '',
+        fileType: 'pdf',
+        batchId: myBatches[0]?.id || '',
+        subject: '',
+        tags: '',
+      });
+      toast.success('Material uploaded successfully', { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to upload material', { id: toastId });
+    }
   };
 
-  const deleteMaterial = (id: string) => {
-    setMaterials((prev) => prev.filter((m) => m.id !== id));
-    toast.success('Material deleted');
+  const deleteMaterial = async (id: string) => {
+    const toastId = toast.loading('Deleting material...');
+    try {
+      await deleteDoc(doc(db, 'materials', id));
+      toast.success('Material deleted', { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to delete material', { id: toastId });
+    }
   };
+
+  const isLoading = batchesLoading || materialsLoading;
+
+  if (isLoading) {
+    return (
+      <AppLayout role="teacher" title="Study Materials">
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="animate-spin text-blue-600" size={32} />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout role="teacher" title="Study Materials">
@@ -105,10 +139,10 @@ export function TeacherMaterials() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {materials.map((mat) => {
-            const batch = mockBatches.find((b) => b.id === mat.batchId);
+            const batch = batches.find((b) => b.id === mat.batchId);
             const ftc = fileTypeConfig[mat.fileType];
             return (
-              <Card key={mat.id}>
+              <Card key={mat.uid}>
                 <div className="flex items-start gap-3">
                   <div
                     className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${ftc.bg} ${ftc.color}`}
@@ -126,7 +160,7 @@ export function TeacherMaterials() {
                         )}
                       </div>
                       <button
-                        onClick={() => deleteMaterial(mat.id)}
+                        onClick={() => deleteMaterial(mat.uid)}
                         className="p-1 text-slate-400 hover:text-red-500 flex-shrink-0 transition-colors"
                       >
                         <Trash2 size={14} />
@@ -135,7 +169,7 @@ export function TeacherMaterials() {
 
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       <Badge variant="info" size="sm">
-                        {batch?.name.split('—')[0].trim()}
+                        {batch?.name.split('—')[0].trim() || 'Unknown'}
                       </Badge>
                       <Badge
                         variant={

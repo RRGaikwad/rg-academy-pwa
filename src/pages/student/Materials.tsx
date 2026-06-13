@@ -5,13 +5,14 @@ import { Badge } from '../../components/shared/Badge';
 import { Input, Select } from '../../components/shared/Input';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { useAuthStore } from '../../store/authStore';
-import { mockBatches, mockMaterials } from '../../data/mockData';
-import { BookMarked, Search, FileText, Link, Image, Download, Globe, BookOpen } from 'lucide-react';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import type { Batch, Material } from '../../types';
+import { BookMarked, Search, FileText, Link as LinkIcon, Image, Download, Globe, BookOpen, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 const fileTypeConfig = {
   pdf: { icon: <FileText size={18} />, color: 'text-red-600', bg: 'bg-red-50', label: 'PDF' },
-  link: { icon: <Link size={18} />, color: 'text-blue-600', bg: 'bg-blue-50', label: 'Link' },
+  link: { icon: <LinkIcon size={18} />, color: 'text-blue-600', bg: 'bg-blue-50', label: 'Link' },
   image: {
     icon: <Image size={18} />,
     color: 'text-emerald-600',
@@ -25,7 +26,22 @@ export function StudentMaterials() {
   const [search, setSearch] = useState('');
   const [filterScope, setFilterScope] = useState('all');
 
-  const myMaterials = mockMaterials.filter((m) => {
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: materials, loading: materialsLoading } = useFirestoreCollection<Material>('materials');
+
+  const loading = batchesLoading || materialsLoading;
+
+  if (loading) {
+    return (
+      <AppLayout role="student" title="Study Materials">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+        </div>
+      </AppLayout>
+    );
+  }
+
+  const myMaterials = materials.filter((m) => {
     if (m.scope === 'institute') return true;
     if (m.scope === 'batch' && m.batchId && user?.batchIds?.includes(m.batchId)) return true;
     return false;
@@ -95,7 +111,7 @@ export function StudentMaterials() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filtered.map((mat) => {
-            const batch = mat.batchId ? mockBatches.find((b) => b.id === mat.batchId) : null;
+            const batch = mat.batchId ? batches.find((b) => b.id === mat.batchId) : null;
             const ftc = fileTypeConfig[mat.fileType];
             return (
               <Card key={mat.id} hoverable>
@@ -167,7 +183,7 @@ export function StudentMaterials() {
                       >
                         {mat.fileType === 'link' ? (
                           <>
-                            <Link size={12} /> Open
+                            <LinkIcon size={12} /> Open
                           </>
                         ) : (
                           <>

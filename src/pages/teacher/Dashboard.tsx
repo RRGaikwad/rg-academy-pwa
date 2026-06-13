@@ -2,33 +2,37 @@ import { AppLayout } from '../../layouts/AppLayout';
 import { StatCard, Card } from '../../components/shared/Card';
 import { Badge } from '../../components/shared/Badge';
 import { useAuthStore } from '../../store/authStore';
-import {
-  mockBatches,
-  mockExams,
-  mockSubmissions,
-  mockStudents,
-  mockAnnouncements,
-  mockAttendance,
-} from '../../data/mockData';
-import { Users, FileText, ClipboardList, Clock, TrendingUp } from 'lucide-react';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import type { Batch, Exam, Submission, User, Announcement, AttendanceRecord } from '../../types';
+import { Users, FileText, ClipboardList, Clock, TrendingUp, Loader2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { format } from 'date-fns';
 
 export function TeacherDashboard() {
   const { user } = useAuthStore();
-  const myBatches = mockBatches.filter((b) => b.teacherId === user?.uid);
-  const myExams = mockExams.filter((e) => e.teacherId === user?.uid);
-  const mySubmissions = mockSubmissions.filter((s) => myExams.some((e) => e.id === s.examId));
+  
+  const { data: batches, loading: bLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: exams, loading: eLoading } = useFirestoreCollection<Exam>('exams');
+  const { data: submissions, loading: sLoading } = useFirestoreCollection<Submission>('examSubmissions');
+  const { data: users, loading: uLoading } = useFirestoreCollection<User>('users');
+  const { data: announcements, loading: aLoading } = useFirestoreCollection<Announcement>('announcements');
+  const { data: attendance, loading: attLoading } = useFirestoreCollection<AttendanceRecord>('attendance');
+
+  const isLoading = bLoading || eLoading || sLoading || uLoading || aLoading || attLoading;
+
+  const myBatches = batches.filter((b) => b.teacherId === user?.uid);
+  const myExams = exams.filter((e) => e.teacherId === user?.uid);
+  const mySubmissions = submissions.filter((s) => myExams.some((e) => e.id === s.examId));
   const totalStudents = new Set(myBatches.flatMap((b) => b.studentIds)).size;
   const publishedExams = myExams.filter((e) => e.status === 'published').length;
-  const myAnnouncements = mockAnnouncements.filter(
-    (a) => a.createdBy === user?.uid || a.scope === 'institute',
-  );
+  const myAnnouncements = announcements
+    .filter((a) => a.createdBy === user?.uid || a.scope === 'institute')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const examScoreData = myExams
     .filter((e) => e.status === 'closed')
     .map((exam) => {
-      const subs = mockSubmissions.filter((s) => s.examId === exam.id && s.score !== null);
+      const subs = submissions.filter((s) => s.examId === exam.id && s.score !== null);
       const avg =
         subs.length > 0 ? subs.reduce((sum, s) => sum + (s.score || 0), 0) / subs.length : 0;
       return {
@@ -38,10 +42,20 @@ export function TeacherDashboard() {
       };
     });
 
-  const latestAttendance = mockAttendance
+  const latestAttendance = attendance
     .filter((a) => myBatches.some((b) => b.id === a.batchId))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0, 3);
+
+  if (isLoading) {
+    return (
+      <AppLayout role="teacher" title="Teacher Dashboard">
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="animate-spin text-blue-600" size={32} />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout role="teacher" title="Teacher Dashboard">
@@ -116,7 +130,7 @@ export function TeacherDashboard() {
           <h3 className="font-semibold text-slate-900 mb-4">My Batches</h3>
           <div className="space-y-3">
             {myBatches.map((batch) => {
-              const enrolledStudents = mockStudents.filter((s) => batch.studentIds.includes(s.uid));
+              const enrolledStudents = users.filter((s) => batch.studentIds.includes(s.uid));
               return (
                 <div key={batch.id} className="p-3 bg-slate-50 rounded-xl">
                   <div className="flex items-center justify-between">
@@ -150,7 +164,7 @@ export function TeacherDashboard() {
           ) : (
             <div className="space-y-3">
               {latestAttendance.map((att) => {
-                const batch = mockBatches.find((b) => b.id === att.batchId);
+                const batch = batches.find((b) => b.id === att.batchId);
                 const total = Object.keys(att.records).length;
                 const present = Object.values(att.records).filter((v) => v === 'present').length;
                 return (
@@ -169,7 +183,7 @@ export function TeacherDashboard() {
                         {present}/{total} present
                       </p>
                       <p className="text-xs text-slate-400">
-                        {Math.round((present / total) * 100)}%
+                        {total > 0 ? Math.round((present / total) * 100) : 0}%
                       </p>
                     </div>
                   </div>
@@ -193,6 +207,9 @@ export function TeacherDashboard() {
                 </p>
               </div>
             ))}
+            {myAnnouncements.length === 0 && (
+              <p className="text-sm text-slate-400">No announcements yet.</p>
+            )}
           </div>
         </Card>
       </div>

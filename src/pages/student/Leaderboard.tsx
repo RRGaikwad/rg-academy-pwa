@@ -1,23 +1,77 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { AppLayout } from '../../layouts/AppLayout';
 import { Card } from '../../components/shared/Card';
 import { Badge } from '../../components/shared/Badge';
 import { useAuthStore } from '../../store/authStore';
-import { mockBatches, mockLeaderboards, mockInstituteLeaderboard } from '../../data/mockData';
-import type { LeaderboardEntry } from '../../types';
-import { Trophy, Medal, Star, Users } from 'lucide-react';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import type { Batch, Submission, User, LeaderboardEntry } from '../../types';
+import { Trophy, Medal, Star, Users, Loader2 } from 'lucide-react';
 
 export function StudentLeaderboard() {
   const { user } = useAuthStore();
-  const myBatches = mockBatches.filter((b) => user?.batchIds?.includes(b.id));
   const [selectedBatch, setSelectedBatch] = useState<'institute' | string>('institute');
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: submissions, loading: subsLoading } = useFirestoreCollection<Submission>('submissions');
+  const { data: users, loading: usersLoading } = useFirestoreCollection<User>('users');
 
-  const currentRankings: LeaderboardEntry[] =
-    selectedBatch === 'institute'
-      ? mockInstituteLeaderboard
-      : mockLeaderboards[selectedBatch]?.rankings || [];
+  const loading = batchesLoading || subsLoading || usersLoading;
+
+  const myBatches = useMemo(() => batches.filter((b) => user?.batchIds?.includes(b.id)), [batches, user]);
+
+  const currentRankings = useMemo(() => {
+    if (loading) return [];
+    
+    let filteredSubs = submissions.filter(s => !s.draft && s.score !== null);
+    if (selectedBatch !== 'institute') {
+      filteredSubs = filteredSubs.filter(s => s.batchId === selectedBatch);
+    }
+
+    const studentStats: Record<string, { totalScore: number; examsTaken: number; earliestSubmit: number; name: string }> = {};
+
+    filteredSubs.forEach(s => {
+      if (!studentStats[s.studentId]) {
+        const student = users.find(u => u.uid === s.studentId);
+        studentStats[s.studentId] = { 
+          totalScore: 0, 
+          examsTaken: 0, 
+          earliestSubmit: Infinity,
+          name: student?.name || 'Unknown Student'
+        };
+      }
+      studentStats[s.studentId].totalScore += s.score || 0;
+      studentStats[s.studentId].examsTaken += 1;
+      const t = new Date(s.submittedAt || 0).getTime();
+      if (t < studentStats[s.studentId].earliestSubmit) {
+        studentStats[s.studentId].earliestSubmit = t;
+      }
+    });
+
+    const rankings = Object.keys(studentStats)
+      .map(studentId => ({ studentId, ...studentStats[studentId] }))
+      .sort((a, b) => b.totalScore - a.totalScore || a.earliestSubmit - b.earliestSubmit)
+      .map((stat, idx) => ({
+        rank: idx + 1,
+        studentId: stat.studentId,
+        studentName: stat.name,
+        totalScore: stat.totalScore,
+        examsTaken: stat.examsTaken,
+        avgScore: stat.examsTaken > 0 ? stat.totalScore / stat.examsTaken : 0,
+      } as LeaderboardEntry));
+
+    return rankings;
+  }, [submissions, users, selectedBatch, loading]);
 
   const myEntry = currentRankings.find((r) => r.studentId === user?.uid);
+
+  if (loading) {
+    return (
+      <AppLayout role="student" title="Leaderboard">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+        </div>
+      </AppLayout>
+    );
+  }
 
   const getRankIcon = (rank: number) => {
     if (rank === 1) return <Trophy className="text-yellow-500" size={20} />;
@@ -83,7 +137,7 @@ export function StudentLeaderboard() {
           <h3 className="font-semibold text-slate-900">
             {selectedBatch === 'institute'
               ? 'Institute Rankings'
-              : mockBatches.find((b) => b.id === selectedBatch)?.name}
+              : batches.find((b) => b.id === selectedBatch)?.name}
           </h3>
           <span className="text-xs text-slate-400">{currentRankings.length} students</span>
         </div>

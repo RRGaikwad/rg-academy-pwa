@@ -2,15 +2,9 @@ import { AppLayout } from '../../layouts/AppLayout';
 import { StatCard, Card } from '../../components/shared/Card';
 import { Badge } from '../../components/shared/Badge';
 import { useAuthStore } from '../../store/authStore';
-import {
-  mockBatches,
-  mockExams,
-  mockSubmissions,
-  mockMaterials,
-  mockAnnouncements,
-  mockLeaderboards,
-} from '../../data/mockData';
-import { FileText, BookMarked, Trophy, Bell, TrendingUp, Clock } from 'lucide-react';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import type { Batch, Exam, Submission, Material, Announcement } from '../../types';
+import { FileText, BookMarked, Trophy, Bell, TrendingUp, Clock, Loader2 } from 'lucide-react';
 import {
   LineChart,
   Line,
@@ -24,15 +18,33 @@ import { format } from 'date-fns';
 
 export function StudentDashboard() {
   const { user } = useAuthStore();
-  const myBatches = mockBatches.filter((b) => user?.batchIds?.includes(b.id));
-  const mySubmissions = mockSubmissions.filter((s) => s.studentId === user?.uid && !s.draft);
-  const availableExams = mockExams.filter(
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: exams, loading: examsLoading } = useFirestoreCollection<Exam>('exams');
+  const { data: submissions, loading: subsLoading } = useFirestoreCollection<Submission>('submissions');
+  const { data: materials, loading: matsLoading } = useFirestoreCollection<Material>('materials');
+  const { data: announcements, loading: annLoading } = useFirestoreCollection<Announcement>('announcements');
+
+  const loading = batchesLoading || examsLoading || subsLoading || matsLoading || annLoading;
+
+  if (loading) {
+    return (
+      <AppLayout role="student" title="Dashboard">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+        </div>
+      </AppLayout>
+    );
+  }
+
+  const myBatches = batches.filter((b) => user?.batchIds?.includes(b.id));
+  const mySubmissions = submissions.filter((s) => s.studentId === user?.uid && !s.draft);
+  const availableExams = exams.filter(
     (e) => e.status === 'published' && user?.batchIds?.includes(e.batchId),
   );
-  const myMaterials = mockMaterials.filter(
+  const myMaterials = materials.filter(
     (m) => m.scope === 'institute' || (m.batchId && user?.batchIds?.includes(m.batchId)),
   );
-  const myAnnouncements = mockAnnouncements
+  const myAnnouncements = announcements
     .filter((a) => a.scope === 'institute' || (a.batchId && user?.batchIds?.includes(a.batchId)))
     .filter((a) => a.targetRole === 'all' || a.targetRole === 'students');
 
@@ -40,7 +52,7 @@ export function StudentDashboard() {
     .filter((s) => s.score !== null)
     .sort((a, b) => new Date(a.submittedAt || 0).getTime() - new Date(b.submittedAt || 0).getTime())
     .map((s) => {
-      const exam = mockExams.find((e) => e.id === s.examId);
+      const exam = exams.find((e) => e.id === s.examId);
       return {
         name: exam?.title.split('—')[0].trim().substring(0, 12) || 'Exam',
         score: s.score || 0,
@@ -49,13 +61,33 @@ export function StudentDashboard() {
       };
     });
 
-  // Get rank from leaderboards
+  // Get rank from submissions dynamically
   let myRank: number | null = null;
   for (const batchId of user?.batchIds || []) {
-    const lb = mockLeaderboards[batchId];
-    const entry = lb?.rankings.find((r) => r.studentId === user?.uid);
-    if (entry && (myRank === null || entry.rank < myRank)) {
-      myRank = entry.rank;
+    const batchSubs = submissions.filter(s => s.batchId === batchId && !s.draft && s.score !== null);
+    const studentStats: Record<string, { totalScore: number; earliestSubmit: number }> = {};
+    
+    batchSubs.forEach(s => {
+      if (!studentStats[s.studentId]) {
+        studentStats[s.studentId] = { totalScore: 0, earliestSubmit: Infinity };
+      }
+      studentStats[s.studentId].totalScore += s.score || 0;
+      const t = new Date(s.submittedAt || 0).getTime();
+      if (t < studentStats[s.studentId].earliestSubmit) {
+        studentStats[s.studentId].earliestSubmit = t;
+      }
+    });
+
+    const rankings = Object.keys(studentStats).sort((a, b) => {
+      return studentStats[b].totalScore - studentStats[a].totalScore || studentStats[a].earliestSubmit - studentStats[b].earliestSubmit;
+    });
+
+    const rankIdx = rankings.indexOf(user?.uid || '');
+    if (rankIdx !== -1) {
+      const rank = rankIdx + 1;
+      if (myRank === null || rank < myRank) {
+        myRank = rank;
+      }
     }
   }
 
@@ -177,7 +209,7 @@ export function StudentDashboard() {
           ) : (
             <div className="space-y-3">
               {availableExams.map((exam) => {
-                const batch = mockBatches.find((b) => b.id === exam.batchId);
+                const batch = batches.find((b) => b.id === exam.batchId);
                 const alreadyAttempted = mySubmissions.some((s) => s.examId === exam.id);
                 return (
                   <div

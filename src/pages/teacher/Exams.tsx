@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppLayout } from '../../layouts/AppLayout';
 import { Card } from '../../components/shared/Card';
 import { Button } from '../../components/shared/Button';
@@ -7,13 +7,10 @@ import { Input, Select, Textarea } from '../../components/shared/Input';
 import { Modal } from '../../components/shared/Modal';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { useAuthStore } from '../../store/authStore';
-import {
-  mockBatches,
-  mockExams as initExams,
-  mockSubmissions,
-  mockStudents,
-} from '../../data/mockData';
-import type { Exam, Question, ExamStatus } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import type { Exam, Question, ExamStatus, Batch, Submission, User } from '../../types';
 import { format } from 'date-fns';
 import {
   Plus,
@@ -27,14 +24,21 @@ import {
   Trash2,
   PlusCircle,
   CheckCircle,
+  Loader2,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import toast from 'react-hot-toast';
 
 export function TeacherExams() {
   const { user } = useAuthStore();
-  const myBatches = mockBatches.filter((b) => b.teacherId === user?.uid);
-  const [exams, setExams] = useState<Exam[]>(initExams.filter((e) => e.teacherId === user?.uid));
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: exams, loading: examsLoading } = useFirestoreCollection<Exam>('exams');
+  const { data: submissions, loading: subLoading } = useFirestoreCollection<Submission>('examSubmissions');
+  const { data: users, loading: usersLoading } = useFirestoreCollection<User>('users');
+
+  const myBatches = batches.filter((b) => b.teacherId === user?.uid);
+  const myExams = exams.filter((e) => e.teacherId === user?.uid);
+
   const [activeTab, setActiveTab] = useState<'list' | 'create' | 'results'>('list');
   const [viewExam, setViewExam] = useState<Exam | null>(null);
   const [resultsExam, setResultsExam] = useState<Exam | null>(null);
@@ -42,12 +46,18 @@ export function TeacherExams() {
 
   const [newExam, setNewExam] = useState({
     title: '',
-    batchId: myBatches[0]?.id || '',
+    batchId: '',
     durationMins: 60,
     marksPerQ: 4,
     negativeMarks: 1,
     questions: [] as Question[],
   });
+
+  useEffect(() => {
+    if (myBatches.length > 0 && !newExam.batchId) {
+      setNewExam((prev) => ({ ...prev, batchId: myBatches[0].id }));
+    }
+  }, [myBatches, newExam.batchId]);
 
   const [newQuestion, setNewQuestion] = useState({
     text: '',
@@ -55,7 +65,7 @@ export function TeacherExams() {
     correctIdx: 0,
   });
 
-  const filtered = exams.filter((e) => filterStatus === 'all' || e.status === filterStatus);
+  const filtered = myExams.filter((e) => filterStatus === 'all' || e.status === filterStatus);
 
   const addQuestion = () => {
     if (!newQuestion.text || newQuestion.options.some((o) => !o.trim())) {
@@ -77,7 +87,7 @@ export function TeacherExams() {
     setNewExam((e) => ({ ...e, questions: e.questions.filter((q) => q.id !== id) }));
   };
 
-  const createExam = (status: 'draft' | 'published') => {
+  const createExam = async (status: 'draft' | 'published') => {
     if (!newExam.title || !newExam.batchId) {
       toast.error('Please fill all fields');
       return;
@@ -86,55 +96,58 @@ export function TeacherExams() {
       toast.error('Add at least one question');
       return;
     }
-    const exam: Exam = {
-      id: `exam_${Date.now()}`,
-      title: newExam.title,
-      batchId: newExam.batchId,
-      teacherId: user?.uid || '',
-      durationMins: newExam.durationMins,
-      marksPerQ: newExam.marksPerQ,
-      negativeMarks: newExam.negativeMarks,
-      totalMarks: newExam.questions.length * newExam.marksPerQ,
-      questions: newExam.questions,
-      status,
-      publishedAt: status === 'published' ? new Date().toISOString() : null,
-      closedAt: null,
-      createdAt: new Date().toISOString(),
-    };
-    setExams((prev) => [exam, ...prev]);
-    setNewExam({
-      title: '',
-      batchId: myBatches[0]?.id || '',
-      durationMins: 60,
-      marksPerQ: 4,
-      negativeMarks: 1,
-      questions: [],
-    });
-    setActiveTab('list');
-    toast.success(`Exam ${status === 'published' ? 'published' : 'saved as draft'} successfully!`);
+    const toastId = toast.loading('Saving exam...');
+    try {
+      const examData: Omit<Exam, 'id'> = {
+        title: newExam.title,
+        batchId: newExam.batchId,
+        teacherId: user?.uid || '',
+        durationMins: newExam.durationMins,
+        marksPerQ: newExam.marksPerQ,
+        negativeMarks: newExam.negativeMarks,
+        totalMarks: newExam.questions.length * newExam.marksPerQ,
+        questions: newExam.questions,
+        status,
+        publishedAt: status === 'published' ? new Date().toISOString() : null,
+        closedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      await addDoc(collection(db, 'exams'), examData);
+      setNewExam({
+        title: '',
+        batchId: myBatches[0]?.id || '',
+        durationMins: 60,
+        marksPerQ: 4,
+        negativeMarks: 1,
+        questions: [],
+      });
+      setActiveTab('list');
+      toast.success(`Exam ${status === 'published' ? 'published' : 'saved as draft'} successfully!`, { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to save exam', { id: toastId });
+    }
   };
 
-  const updateExamStatus = (examId: string, newStatus: ExamStatus) => {
-    setExams((prev) =>
-      prev.map((e) =>
-        e.id === examId
-          ? {
-              ...e,
-              status: newStatus,
-              publishedAt:
-                newStatus === 'published'
-                  ? e.publishedAt || new Date().toISOString()
-                  : e.publishedAt,
-              closedAt: newStatus === 'closed' ? new Date().toISOString() : e.closedAt,
-            }
-          : e,
-      ),
-    );
-    toast.success(`Exam ${newStatus}`);
+  const updateExamStatus = async (examId: string, newStatus: ExamStatus) => {
+    const exam = exams.find(e => e.id === examId);
+    if (!exam) return;
+    const toastId = toast.loading('Updating exam status...');
+    try {
+      await updateDoc(doc(db, 'exams', examId), {
+        status: newStatus,
+        publishedAt: newStatus === 'published' ? (exam.publishedAt || new Date().toISOString()) : exam.publishedAt,
+        closedAt: newStatus === 'closed' ? new Date().toISOString() : exam.closedAt,
+      });
+      toast.success(`Exam ${newStatus}`, { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to update exam status', { id: toastId });
+    }
   };
 
-  const getExamSubmissions = (examId: string) =>
-    mockSubmissions.filter((s) => s.examId === examId && !s.draft);
+  const getSubmissions = (examId: string) =>
+    submissions.filter((s) => s.examId === examId && !s.draft);
 
   const statusBadge = (status: ExamStatus) => {
     const map = { draft: 'warning', published: 'success', closed: 'neutral' } as const;
@@ -144,6 +157,18 @@ export function TeacherExams() {
       </Badge>
     );
   };
+
+  const isLoading = batchesLoading || examsLoading || subLoading || usersLoading;
+
+  if (isLoading) {
+    return (
+      <AppLayout role="teacher" title="MCQ Exams">
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="animate-spin text-blue-600" size={32} />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout role="teacher" title="MCQ Exams">
@@ -190,8 +215,8 @@ export function TeacherExams() {
           ) : (
             <div className="space-y-4">
               {filtered.map((exam) => {
-                const subs = getExamSubmissions(exam.id);
-                const batch = mockBatches.find((b) => b.id === exam.batchId);
+                const subs = getSubmissions(exam.id);
+                const batch = batches.find((b) => b.id === exam.batchId);
                 return (
                   <Card key={exam.id}>
                     <div className="flex items-start justify-between gap-3">
@@ -211,7 +236,7 @@ export function TeacherExams() {
                           </span>
                           <span className="flex items-center gap-1">
                             <Users size={12} />
-                            {batch?.name}
+                            {batch?.name || 'Unknown Batch'}
                           </span>
                           {exam.publishedAt && (
                             <span>
@@ -476,10 +501,10 @@ export function TeacherExams() {
       >
         {resultsExam &&
           (() => {
-            const subs = getExamSubmissions(resultsExam.id);
+            const subs = getSubmissions(resultsExam.id);
             const chartData = subs.map((s) => ({
               name:
-                mockStudents.find((st) => st.uid === s.studentId)?.name.split(' ')[0] || 'Unknown',
+                users.find((st) => st.uid === s.studentId)?.name.split(' ')[0] || 'Unknown',
               score: s.score || 0,
             }));
             return (
@@ -547,7 +572,7 @@ export function TeacherExams() {
                       {subs
                         .sort((a, b) => (b.score || 0) - (a.score || 0))
                         .map((sub) => {
-                          const student = mockStudents.find((s) => s.uid === sub.studentId);
+                          const student = users.find((s) => s.uid === sub.studentId);
                           return (
                             <tr key={sub.id} className="border-b border-slate-100">
                               <td className="py-2 px-3 font-medium text-slate-900">

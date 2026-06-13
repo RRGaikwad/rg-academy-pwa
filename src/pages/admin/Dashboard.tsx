@@ -26,7 +26,6 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { useFirestoreCollection } from '../../hooks/useFirestore';
-import { seedFirestore } from '../../utils/seedData';
 import { Button } from '../../components/shared/Button';
 import type { Student, Teacher, Batch, FeeRecord, Exam, Announcement } from '../../types';
 
@@ -106,22 +105,6 @@ export function AdminDashboard() {
 
   return (
     <AppLayout role="admin" title="Admin Dashboard">
-      {students.length === 0 && (
-        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Database className="text-amber-500" />
-            <div>
-              <h3 className="text-sm font-semibold text-amber-800">Database is empty</h3>
-              <p className="text-xs text-amber-700">
-                Click to seed your Firestore database with mock data.
-              </p>
-            </div>
-          </div>
-          <Button size="sm" onClick={seedFirestore}>
-            Seed Database
-          </Button>
-        </div>
-      )}
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard

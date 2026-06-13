@@ -7,13 +7,17 @@ import { Input } from '../../components/shared/Input';
 import { Modal } from '../../components/shared/Modal';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { Plus, Search, Users, Mail, Phone, BookOpen, Edit, UserCheck, UserX } from 'lucide-react';
-import { mockTeachers as initialTeachers, mockBatches } from '../../data/mockData';
-import type { Teacher } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import type { Teacher, Batch } from '../../types';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
 export function AdminTeachers() {
-  const [teachers, setTeachers] = useState<Teacher[]>(initialTeachers);
+  const { data: teachers, loading: loadingTeachers } = useFirestoreCollection<Teacher>('teachers');
+  const { data: batches } = useFirestoreCollection<Batch>('batches');
+  
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editTeacher, setEditTeacher] = useState<Teacher | null>(null);
@@ -53,41 +57,47 @@ export function AdminTeachers() {
     setModalOpen(true);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.name || !form.email || !form.subject) {
       toast.error('Please fill all required fields');
       return;
     }
-    if (editTeacher) {
-      setTeachers((prev) =>
-        prev.map((t) =>
-          t.uid === editTeacher.uid
-            ? { ...t, name: form.name, email: form.email, phone: form.phone, subject: form.subject }
-            : t,
-        ),
-      );
-      toast.success('Teacher updated');
-    } else {
-      const newTeacher: Teacher = {
-        uid: `teacher_${Date.now()}`,
-        name: form.name,
-        email: form.email,
-        phone: form.phone,
-        subject: form.subject,
-        batchIds: [],
-        isActive: true,
-        createdBy: 'admin_001',
-        createdAt: new Date().toISOString(),
-      };
-      setTeachers((prev) => [...prev, newTeacher]);
-      toast.success('Teacher account created. Credentials sent via email.');
+    const tId = toast.loading(editTeacher ? 'Updating...' : 'Creating...');
+    try {
+      if (editTeacher && (editTeacher.id || editTeacher.uid)) {
+        await updateDoc(doc(db, 'teachers', editTeacher.id || editTeacher.uid!), {
+          name: form.name, email: form.email, phone: form.phone, subject: form.subject 
+        });
+        toast.success('Teacher updated', { id: tId });
+      } else {
+        const newTeacher = {
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          subject: form.subject,
+          batchIds: [],
+          isActive: true,
+          createdBy: 'admin_001',
+          createdAt: new Date().toISOString(),
+        };
+        await addDoc(collection(db, 'teachers'), newTeacher);
+        toast.success('Teacher account created. Credentials sent via email.', { id: tId });
+      }
+      setModalOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save', { id: tId });
     }
-    setModalOpen(false);
   };
 
-  const toggleActive = (uid: string) => {
-    setTeachers((prev) => prev.map((t) => (t.uid === uid ? { ...t, isActive: !t.isActive } : t)));
-    toast.success('Teacher status updated');
+  const toggleActive = async (teacher: Teacher) => {
+    if (!teacher.id && !teacher.uid) return;
+    const tId = toast.loading('Updating status...');
+    try {
+      await updateDoc(doc(db, 'teachers', teacher.id || teacher.uid!), { isActive: !teacher.isActive });
+      toast.success('Teacher status updated', { id: tId });
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update', { id: tId });
+    }
   };
 
   return (
@@ -111,7 +121,9 @@ export function AdminTeachers() {
       </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered.length === 0 ? (
+        {loadingTeachers ? (
+          <div className="col-span-3 flex justify-center p-8"><p className="text-slate-500">Loading...</p></div>
+        ) : filtered.length === 0 ? (
           <div className="col-span-3">
             <EmptyState
               icon={<Users size={48} />}
@@ -125,9 +137,9 @@ export function AdminTeachers() {
           </div>
         ) : (
           filtered.map((teacher) => {
-            const teacherBatches = mockBatches.filter((b) => teacher.batchIds.includes(b.id));
+            const teacherBatches = batches.filter((b) => (teacher.batchIds || []).includes(b.id || ''));
             return (
-              <Card key={teacher.uid} hoverable>
+              <Card key={teacher.uid || teacher.id} hoverable>
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center text-white font-bold text-lg">
@@ -148,7 +160,7 @@ export function AdminTeachers() {
                       <Edit size={14} />
                     </button>
                     <button
-                      onClick={() => toggleActive(teacher.uid)}
+                      onClick={() => toggleActive(teacher)}
                       className="p-1.5 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-lg transition-colors"
                     >
                       {teacher.isActive ? <UserX size={14} /> : <UserCheck size={14} />}
@@ -191,7 +203,7 @@ export function AdminTeachers() {
                 </div>
 
                 <div className="mt-2 text-xs text-slate-400">
-                  Joined {format(new Date(teacher.createdAt), 'MMM d, yyyy')}
+                  Joined {teacher.createdAt ? format(new Date(teacher.createdAt), 'MMM d, yyyy') : 'Unknown'}
                 </div>
               </Card>
             );

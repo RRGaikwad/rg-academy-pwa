@@ -7,13 +7,16 @@ import { Input, Textarea, Select } from '../../components/shared/Input';
 import { Modal } from '../../components/shared/Modal';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { Plus, Megaphone, Clock, Trash2, Globe, BookOpen } from 'lucide-react';
-import { mockAnnouncements as initAnn, mockBatches } from '../../data/mockData';
-import type { Announcement, AnnouncementScope } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { collection, addDoc, doc, deleteDoc } from 'firebase/firestore';
+import type { Announcement, AnnouncementScope, Batch } from '../../types';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
 export function AdminAnnouncements() {
-  const [announcements, setAnnouncements] = useState<Announcement[]>(initAnn);
+  const { data: announcements, loading: loadingAnnouncements } = useFirestoreCollection<Announcement>('announcements');
+  const { data: batches } = useFirestoreCollection<Batch>('batches');
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({
     title: '',
@@ -23,32 +26,41 @@ export function AdminAnnouncements() {
     targetRole: 'all' as 'all' | 'students' | 'teachers',
   });
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.title || !form.content) {
       toast.error('Title and content are required');
       return;
     }
-    const ann: Announcement = {
-      id: `ann_${Date.now()}`,
-      title: form.title,
-      content: form.content,
-      scope: form.scope,
-      batchId: form.scope === 'batch' ? form.batchId : null,
-      targetRole: form.targetRole,
-      createdBy: 'admin_001',
-      createdByRole: 'admin',
-      createdAt: new Date().toISOString(),
-      readBy: [],
-    };
-    setAnnouncements((prev) => [ann, ...prev]);
-    setModalOpen(false);
-    setForm({ title: '', content: '', scope: 'institute', batchId: '', targetRole: 'all' });
-    toast.success('Announcement published');
+    const tId = toast.loading('Publishing...');
+    try {
+      const annData = {
+        title: form.title,
+        content: form.content,
+        scope: form.scope,
+        batchId: form.scope === 'batch' ? form.batchId : null,
+        targetRole: form.targetRole,
+        createdBy: 'admin_001',
+        createdByRole: 'admin',
+        createdAt: new Date().toISOString(),
+        readBy: [],
+      };
+      await addDoc(collection(db, 'announcements'), annData);
+      setModalOpen(false);
+      setForm({ title: '', content: '', scope: 'institute', batchId: '', targetRole: 'all' });
+      toast.success('Announcement published', { id: tId });
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to publish', { id: tId });
+    }
   };
 
-  const deleteAnn = (id: string) => {
-    setAnnouncements((prev) => prev.filter((a) => a.id !== id));
-    toast.success('Announcement deleted');
+  const deleteAnn = async (id: string) => {
+    const tId = toast.loading('Deleting...');
+    try {
+      await deleteDoc(doc(db, 'announcements', id));
+      toast.success('Announcement deleted', { id: tId });
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete', { id: tId });
+    }
   };
 
   return (
@@ -60,7 +72,9 @@ export function AdminAnnouncements() {
         </Button>
       </div>
 
-      {announcements.length === 0 ? (
+      {loadingAnnouncements ? (
+        <div className="flex justify-center p-8"><p className="text-slate-500">Loading...</p></div>
+      ) : announcements.length === 0 ? (
         <EmptyState
           icon={<Megaphone size={48} />}
           title="No announcements yet"
@@ -73,7 +87,7 @@ export function AdminAnnouncements() {
       ) : (
         <div className="space-y-4">
           {announcements.map((ann) => {
-            const batch = ann.batchId ? mockBatches.find((b) => b.id === ann.batchId) : null;
+            const batch = ann.batchId ? batches.find((b) => b.id === ann.batchId) : null;
             return (
               <Card key={ann.id}>
                 <div className="flex items-start justify-between gap-3">
@@ -108,7 +122,7 @@ export function AdminAnnouncements() {
                     <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
                       <span className="flex items-center gap-1">
                         <Clock size={11} />
-                        {format(new Date(ann.createdAt), 'MMM d, yyyy h:mm a')}
+                        {ann.createdAt ? format(new Date(ann.createdAt), 'MMM d, yyyy h:mm a') : 'Unknown time'}
                       </span>
                       {batch && (
                         <span className="flex items-center gap-1">
@@ -116,11 +130,11 @@ export function AdminAnnouncements() {
                           {batch.name}
                         </span>
                       )}
-                      <span>{ann.readBy.length} read</span>
+                      <span>{(ann.readBy || []).length} read</span>
                     </div>
                   </div>
                   <button
-                    onClick={() => deleteAnn(ann.id)}
+                    onClick={() => ann.id && deleteAnn(ann.id)}
                     className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition-colors flex-shrink-0"
                   >
                     <Trash2 size={15} />
@@ -189,9 +203,9 @@ export function AdminAnnouncements() {
           {form.scope === 'batch' && (
             <Select
               label="Select Batch"
-              options={mockBatches
+              options={batches
                 .filter((b) => b.isActive)
-                .map((b) => ({ value: b.id, label: b.name }))}
+                .map((b) => ({ value: b.id || '', label: b.name }))}
               value={form.batchId}
               onChange={(e) => setForm({ ...form, batchId: e.target.value })}
               placeholder="Choose batch..."

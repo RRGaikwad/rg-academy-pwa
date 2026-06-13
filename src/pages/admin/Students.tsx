@@ -7,13 +7,17 @@ import { Input, Select } from '../../components/shared/Input';
 import { Modal } from '../../components/shared/Modal';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { Plus, Search, UserCheck, UserX, GraduationCap, Phone, Mail, Edit } from 'lucide-react';
-import { mockStudents as initialStudents, mockBatches } from '../../data/mockData';
-import type { Student, FeeType } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import type { Student, FeeType, Batch } from '../../types';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
 export function AdminStudents() {
-  const [students, setStudents] = useState<Student[]>(initialStudents);
+  const { data: students, loading: loadingStudents } = useFirestoreCollection<Student>('students');
+  const { data: batches } = useFirestoreCollection<Batch>('batches');
+  
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
@@ -33,7 +37,7 @@ export function AdminStudents() {
   const filtered = students.filter((s) => {
     const q = search.toLowerCase();
     const matchSearch =
-      s.name.toLowerCase().includes(q) || s.email.toLowerCase().includes(q) || s.phone.includes(q);
+      s.name.toLowerCase().includes(q) || s.email.toLowerCase().includes(q) || (s.phone && s.phone.includes(q));
     const matchStatus =
       filterStatus === 'all' ||
       (filterStatus === 'active' && s.isActive) ||
@@ -60,57 +64,60 @@ export function AdminStudents() {
     setForm({
       name: s.name,
       email: s.email,
-      phone: s.phone,
+      phone: s.phone || '',
       password: '',
-      batchIds: s.batchIds,
-      cycleType: s.feeConfig.cycleType,
-      amount: s.feeConfig.amount.toString(),
+      batchIds: s.batchIds || [],
+      cycleType: s.feeConfig?.cycleType || 'monthly',
+      amount: s.feeConfig?.amount?.toString() || '0',
     });
     setModalOpen(true);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.name || !form.email || !form.phone) {
       toast.error('Please fill all required fields');
       return;
     }
-    if (editStudent) {
-      setStudents((prev) =>
-        prev.map((s) =>
-          s.uid === editStudent.uid
-            ? {
-                ...s,
-                name: form.name,
-                email: form.email,
-                phone: form.phone,
-                batchIds: form.batchIds,
-                feeConfig: { cycleType: form.cycleType, amount: Number(form.amount) },
-              }
-            : s,
-        ),
-      );
-      toast.success('Student updated successfully');
-    } else {
-      const newStudent: Student = {
-        uid: `student_${Date.now()}`,
-        name: form.name,
-        email: form.email,
-        phone: form.phone,
-        batchIds: form.batchIds,
-        feeConfig: { cycleType: form.cycleType, amount: Number(form.amount) },
-        isActive: true,
-        enrolledAt: new Date().toISOString(),
-        createdBy: 'admin_001',
-      };
-      setStudents((prev) => [...prev, newStudent]);
-      toast.success('Student created successfully');
+    const tId = toast.loading(editStudent ? 'Updating...' : 'Creating...');
+    try {
+      if (editStudent && (editStudent.uid || editStudent.uid)) {
+        await updateDoc(doc(db, 'students', editStudent.uid || editStudent.uid!), {
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          batchIds: form.batchIds,
+          feeConfig: { cycleType: form.cycleType, amount: Number(form.amount) },
+        });
+        toast.success('Student updated successfully', { id: tId });
+      } else {
+        const newStudent = {
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          batchIds: form.batchIds,
+          feeConfig: { cycleType: form.cycleType, amount: Number(form.amount) },
+          isActive: true,
+          enrolledAt: new Date().toISOString(),
+          createdBy: 'admin_001',
+        };
+        await addDoc(collection(db, 'students'), newStudent);
+        toast.success('Student created successfully', { id: tId });
+      }
+      setModalOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save', { id: tId });
     }
-    setModalOpen(false);
   };
 
-  const toggleActive = (uid: string) => {
-    setStudents((prev) => prev.map((s) => (s.uid === uid ? { ...s, isActive: !s.isActive } : s)));
-    toast.success('Student status updated');
+  const toggleActive = async (student: Student) => {
+    if (!student.uid && !student.uid) return;
+    const tId = toast.loading('Updating status...');
+    try {
+      await updateDoc(doc(db, 'students', student.uid || student.uid!), { isActive: !student.isActive });
+      toast.success('Student status updated', { id: tId });
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update', { id: tId });
+    }
   };
 
   const toggleBatch = (batchId: string) => {
@@ -162,7 +169,9 @@ export function AdminStudents() {
 
       {/* Students Table */}
       <Card padding="none">
-        {filtered.length === 0 ? (
+        {loadingStudents ? (
+          <div className="flex justify-center p-8"><p className="text-slate-500">Loading...</p></div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<GraduationCap size={48} />}
             title="No students found"
@@ -200,9 +209,9 @@ export function AdminStudents() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filtered.map((student) => {
-                  const batches = mockBatches.filter((b) => student.batchIds.includes(b.id));
+                  const studentBatches = batches.filter((b) => (student.batchIds || []).includes(b.id || ''));
                   return (
-                    <tr key={student.uid} className="hover:bg-slate-50 transition-colors">
+                    <tr key={student.uid || student.uid} className="hover:bg-slate-50 transition-colors">
                       <td className="py-3 px-4">
                         <div
                           className="flex items-center gap-3 cursor-pointer"
@@ -219,10 +228,10 @@ export function AdminStudents() {
                       </td>
                       <td className="py-3 px-4 hidden md:table-cell">
                         <div className="flex flex-wrap gap-1">
-                          {batches.length === 0 ? (
+                          {studentBatches.length === 0 ? (
                             <span className="text-slate-400 text-xs">Not enrolled</span>
                           ) : (
-                            batches.map((b) => (
+                            studentBatches.map((b) => (
                               <Badge key={b.id} variant="info" size="sm">
                                 {b.name.split('—')[0].trim()}
                               </Badge>
@@ -234,23 +243,23 @@ export function AdminStudents() {
                         <div>
                           <Badge
                             variant={
-                              student.feeConfig.cycleType === 'monthly'
+                              student.feeConfig?.cycleType === 'monthly'
                                 ? 'default'
-                                : student.feeConfig.cycleType === 'annual'
+                                : student.feeConfig?.cycleType === 'annual'
                                   ? 'success'
                                   : 'warning'
                             }
                             size="sm"
                           >
-                            {student.feeConfig.cycleType}
+                            {student.feeConfig?.cycleType || 'None'}
                           </Badge>
                           <p className="text-xs text-slate-500 mt-0.5">
-                            ₹{student.feeConfig.amount.toLocaleString()}
+                            ₹{student.feeConfig?.amount?.toLocaleString() || 0}
                           </p>
                         </div>
                       </td>
                       <td className="py-3 px-4 hidden lg:table-cell text-xs text-slate-500">
-                        {format(new Date(student.enrolledAt), 'MMM d, yyyy')}
+                        {student.enrolledAt ? format(new Date(student.enrolledAt), 'MMM d, yyyy') : 'Unknown'}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <Badge variant={student.isActive ? 'success' : 'neutral'} size="sm">
@@ -266,7 +275,7 @@ export function AdminStudents() {
                             <Edit size={15} />
                           </button>
                           <button
-                            onClick={() => toggleActive(student.uid)}
+                            onClick={() => toggleActive(student)}
                             className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600 transition-colors"
                           >
                             {student.isActive ? <UserX size={15} /> : <UserCheck size={15} />}
@@ -341,7 +350,7 @@ export function AdminStudents() {
               Assign to Batches
             </label>
             <div className="grid grid-cols-2 gap-2">
-              {mockBatches
+              {batches
                 .filter((b) => b.isActive)
                 .map((batch) => (
                   <label
@@ -350,8 +359,8 @@ export function AdminStudents() {
                   >
                     <input
                       type="checkbox"
-                      checked={form.batchIds.includes(batch.id)}
-                      onChange={() => toggleBatch(batch.id)}
+                      checked={form.batchIds.includes(batch.id || '')}
+                      onChange={() => toggleBatch(batch.id || '')}
                       className="rounded"
                     />
                     <div className="text-xs">
@@ -416,7 +425,7 @@ export function AdminStudents() {
               </div>
               <div className="flex items-center gap-2 text-slate-600">
                 <Phone size={14} />
-                {viewStudent.phone}
+                {viewStudent.phone || 'N/A'}
               </div>
             </div>
             <div>
@@ -424,14 +433,14 @@ export function AdminStudents() {
                 Enrolled Batches
               </p>
               <div className="flex flex-wrap gap-2">
-                {mockBatches
-                  .filter((b) => viewStudent.batchIds.includes(b.id))
+                {batches
+                  .filter((b) => (viewStudent.batchIds || []).includes(b.id || ''))
                   .map((b) => (
                     <Badge key={b.id} variant="info">
                       {b.name}
                     </Badge>
                   ))}
-                {viewStudent.batchIds.length === 0 && (
+                {(!viewStudent.batchIds || viewStudent.batchIds.length === 0) && (
                   <span className="text-slate-400 text-sm">Not enrolled in any batch</span>
                 )}
               </div>
@@ -443,18 +452,18 @@ export function AdminStudents() {
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div>
                   <span className="text-slate-500">Cycle:</span>{' '}
-                  <span className="font-medium capitalize">{viewStudent.feeConfig.cycleType}</span>
+                  <span className="font-medium capitalize">{viewStudent.feeConfig?.cycleType || 'N/A'}</span>
                 </div>
                 <div>
                   <span className="text-slate-500">Amount:</span>{' '}
                   <span className="font-medium">
-                    ₹{viewStudent.feeConfig.amount.toLocaleString()}
+                    ₹{viewStudent.feeConfig?.amount?.toLocaleString() || 0}
                   </span>
                 </div>
                 <div>
                   <span className="text-slate-500">Enrolled:</span>{' '}
                   <span className="font-medium">
-                    {format(new Date(viewStudent.enrolledAt), 'MMM d, yyyy')}
+                    {viewStudent.enrolledAt ? format(new Date(viewStudent.enrolledAt), 'MMM d, yyyy') : 'Unknown'}
                   </span>
                 </div>
               </div>

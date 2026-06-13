@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { AppLayout } from '../../layouts/AppLayout';
 import { Card } from '../../components/shared/Card';
 import { Button } from '../../components/shared/Button';
-
 import { Select } from '../../components/shared/Input';
 import { useAuthStore } from '../../store/authStore';
-import { mockBatches, mockStudents, mockAttendance as initAttendance } from '../../data/mockData';
-import type { AttendanceRecord, AttendanceStatus } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import type { AttendanceRecord, AttendanceStatus, Batch, User } from '../../types';
 import { format } from 'date-fns';
-import { CheckCircle, XCircle, Clock, Calendar, Save } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Calendar, Save, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const statusConfig: Record<
@@ -34,35 +36,41 @@ const statusConfig: Record<
 
 export function TeacherAttendance() {
   const { user } = useAuthStore();
-  const myBatches = mockBatches.filter((b) => b.teacherId === user?.uid);
-  const [selectedBatch, setSelectedBatch] = useState(myBatches[0]?.id || '');
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: users, loading: usersLoading } = useFirestoreCollection<User>('users');
+  const { data: attendanceData, loading: attLoading } = useFirestoreCollection<AttendanceRecord>('attendance');
+
+  const myBatches = batches.filter((b) => b.teacherId === user?.uid);
+  const [selectedBatch, setSelectedBatch] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>(initAttendance);
   const [currentRecords, setCurrentRecords] = useState<Record<string, AttendanceStatus>>({});
   const [viewMode, setViewMode] = useState<'mark' | 'history'>('mark');
 
-  const batch = mockBatches.find((b) => b.id === selectedBatch);
-  const students = mockStudents.filter((s) => batch?.studentIds.includes(s.uid));
+  useEffect(() => {
+    if (myBatches.length > 0 && !selectedBatch) {
+      setSelectedBatch(myBatches[0].id);
+    }
+  }, [myBatches, selectedBatch]);
 
-  const existingRecord = attendance.find(
+  const batch = batches.find((b) => b.id === selectedBatch);
+  const batchStudents = users.filter((s) => s.role === 'student' && batch?.studentIds.includes(s.uid));
+
+  const existingRecord = attendanceData.find(
     (a) => a.batchId === selectedBatch && a.date === selectedDate,
   );
 
-  const initCurrentRecords = () => {
+  useEffect(() => {
     if (existingRecord) {
       setCurrentRecords(existingRecord.records);
     } else {
       const init: Record<string, AttendanceStatus> = {};
-      students.forEach((s) => {
+      batchStudents.forEach((s) => {
         init[s.uid] = 'present';
       });
       setCurrentRecords(init);
     }
-  };
-
-  if (Object.keys(currentRecords).length === 0 && students.length > 0) {
-    initCurrentRecords();
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingRecord, selectedBatch, selectedDate, batchStudents.length]);
 
   const setStatus = (studentId: string, status: AttendanceStatus) => {
     setCurrentRecords((prev) => ({ ...prev, [studentId]: status }));
@@ -70,36 +78,54 @@ export function TeacherAttendance() {
 
   const markAll = (status: AttendanceStatus) => {
     const all: Record<string, AttendanceStatus> = {};
-    students.forEach((s) => {
+    batchStudents.forEach((s) => {
       all[s.uid] = status;
     });
     setCurrentRecords(all);
   };
 
-  const saveAttendance = () => {
-    const record: AttendanceRecord = {
-      batchId: selectedBatch,
-      date: selectedDate,
-      markedBy: user?.uid || '',
-      markedAt: new Date().toISOString(),
-      records: currentRecords,
-    };
-    setAttendance((prev) => {
-      const filtered = prev.filter(
-        (a) => !(a.batchId === selectedBatch && a.date === selectedDate),
-      );
-      return [...filtered, record];
-    });
-    toast.success('Attendance saved successfully!');
+  const saveAttendance = async () => {
+    const toastId = toast.loading('Saving attendance...');
+    try {
+      const recordData = {
+        batchId: selectedBatch,
+        date: selectedDate,
+        markedBy: user?.uid || '',
+        markedAt: new Date().toISOString(),
+        records: currentRecords,
+      };
+
+      if (existingRecord) {
+        await updateDoc(doc(db, 'attendance', existingRecord.id), recordData);
+      } else {
+        await addDoc(collection(db, 'attendance'), recordData);
+      }
+      toast.success('Attendance saved successfully!', { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to save attendance', { id: toastId });
+    }
   };
 
-  const batchHistory = attendance
+  const batchHistory = attendanceData
     .filter((a) => a.batchId === selectedBatch)
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const presentCount = Object.values(currentRecords).filter((v) => v === 'present').length;
   const absentCount = Object.values(currentRecords).filter((v) => v === 'absent').length;
   const lateCount = Object.values(currentRecords).filter((v) => v === 'late').length;
+
+  const isLoading = batchesLoading || usersLoading || attLoading;
+
+  if (isLoading) {
+    return (
+      <AppLayout role="teacher" title="Attendance">
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="animate-spin text-blue-600" size={32} />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout role="teacher" title="Attendance">
@@ -187,7 +213,7 @@ export function TeacherAttendance() {
           {/* Student List */}
           <Card padding="none">
             <div className="divide-y divide-slate-100">
-              {students.map((student) => {
+              {batchStudents.map((student) => {
                 const status = currentRecords[student.uid] || 'present';
                 return (
                   <div key={student.uid} className="flex items-center justify-between px-4 py-3">
@@ -218,15 +244,15 @@ export function TeacherAttendance() {
                   </div>
                 );
               })}
-              {students.length === 0 && (
-                <div className="px-4 py-8 text-center text-slate-400 text-sm">
+              {batchStudents.length === 0 && (
+               <div className="px-4 py-8 text-center text-slate-400 text-sm">
                   No students enrolled in this batch.
                 </div>
               )}
             </div>
           </Card>
 
-          {students.length > 0 && (
+          {batchStudents.length > 0 && (
             <div className="mt-4 flex justify-end">
               <Button onClick={saveAttendance} leftIcon={<Save size={16} />}>
                 Save Attendance
@@ -264,13 +290,13 @@ export function TeacherAttendance() {
                         {present}/{total}
                       </p>
                       <p className="text-xs text-slate-500">
-                        {Math.round((present / total) * 100)}% present
+                        {total > 0 ? Math.round((present / total) * 100) : 0}% present
                       </p>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(record.records).map(([sid, status]) => {
-                      const student = mockStudents.find((s) => s.uid === sid);
+                      const student = users.find((s) => s.uid === sid);
                       const sc = statusConfig[status];
                       return (
                         <span
@@ -278,7 +304,7 @@ export function TeacherAttendance() {
                           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${sc.color}`}
                         >
                           {sc.icon}
-                          {student?.name.split(' ')[0]}
+                          {student?.name.split(' ')[0] || 'Unknown'}
                         </span>
                       );
                     })}

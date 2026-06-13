@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppLayout } from '../../layouts/AppLayout';
 import { Card } from '../../components/shared/Card';
 import { Button } from '../../components/shared/Button';
@@ -7,52 +7,87 @@ import { Input, Textarea, Select } from '../../components/shared/Input';
 import { Modal } from '../../components/shared/Modal';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { useAuthStore } from '../../store/authStore';
-import { mockBatches, mockAnnouncements as initAnn } from '../../data/mockData';
-import type { Announcement } from '../../types';
+import { useFirestoreCollection } from '../../hooks/useFirestore';
+import { db } from '../../firebase/config';
+import { collection, addDoc, doc, deleteDoc } from 'firebase/firestore';
+import type { Announcement, Batch } from '../../types';
 import { format } from 'date-fns';
-import { Plus, Megaphone, Clock, Trash2 } from 'lucide-react';
+import { Plus, Megaphone, Clock, Trash2, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export function TeacherAnnouncements() {
   const { user } = useAuthStore();
-  const myBatches = mockBatches.filter((b) => b.teacherId === user?.uid);
-  const [announcements, setAnnouncements] = useState<Announcement[]>(
-    initAnn.filter(
-      (a) => a.scope === 'institute' || (a.batchId && myBatches.some((b) => b.id === a.batchId)),
-    ),
-  );
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState({ title: '', content: '', batchId: myBatches[0]?.id || '' });
+  const { data: batches, loading: batchesLoading } = useFirestoreCollection<Batch>('batches');
+  const { data: allAnnouncements, loading: annLoading } = useFirestoreCollection<Announcement>('announcements');
 
-  const handleSubmit = () => {
+  const myBatches = batches.filter((b) => b.teacherId === user?.uid);
+  const announcements = allAnnouncements
+    .filter(
+      (a) => a.scope === 'institute' || (a.batchId && myBatches.some((b) => b.id === a.batchId)),
+    )
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [form, setForm] = useState({ title: '', content: '', batchId: '' });
+
+  useEffect(() => {
+    if (modalOpen && !form.batchId && myBatches.length > 0) {
+      setForm((prev) => ({ ...prev, batchId: myBatches[0].id }));
+    }
+  }, [modalOpen, myBatches, form.batchId]);
+
+  const handleSubmit = async () => {
     if (!form.title || !form.content || !form.batchId) {
       toast.error('Please fill all fields');
       return;
     }
-    const ann: Announcement = {
-      id: `ann_${Date.now()}`,
-      title: form.title,
-      content: form.content,
-      scope: 'batch',
-      batchId: form.batchId,
-      targetRole: 'students',
-      createdBy: user?.uid || '',
-      createdByRole: 'teacher',
-      createdAt: new Date().toISOString(),
-      readBy: [],
-    };
-    setAnnouncements((prev) => [ann, ...prev]);
-    setModalOpen(false);
-    setForm({ title: '', content: '', batchId: myBatches[0]?.id || '' });
-    toast.success('Announcement posted');
+    const toastId = toast.loading('Posting announcement...');
+    try {
+      const ann: Omit<Announcement, 'id'> = {
+        title: form.title,
+        content: form.content,
+        scope: 'batch',
+        batchId: form.batchId,
+        targetRole: 'students',
+        createdBy: user?.uid || '',
+        createdByRole: 'teacher',
+        createdAt: new Date().toISOString(),
+        readBy: [],
+      };
+      await addDoc(collection(db, 'announcements'), ann);
+      setModalOpen(false);
+      setForm({ title: '', content: '', batchId: myBatches[0]?.id || '' });
+      toast.success('Announcement posted', { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to post announcement', { id: toastId });
+    }
   };
 
-  const deleteAnn = (id: string) => {
+  const deleteAnn = async (id: string) => {
     const ann = announcements.find((a) => a.id === id);
     if (ann?.createdBy !== user?.uid) return;
-    setAnnouncements((prev) => prev.filter((a) => a.id !== id));
-    toast.success('Announcement deleted');
+    const toastId = toast.loading('Deleting announcement...');
+    try {
+      await deleteDoc(doc(db, 'announcements', id));
+      toast.success('Announcement deleted', { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to delete announcement', { id: toastId });
+    }
   };
+
+  const isLoading = batchesLoading || annLoading;
+
+  if (isLoading) {
+    return (
+      <AppLayout role="teacher" title="Announcements">
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="animate-spin text-blue-600" size={32} />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout role="teacher" title="Announcements">
@@ -76,7 +111,7 @@ export function TeacherAnnouncements() {
       ) : (
         <div className="space-y-4">
           {announcements.map((ann) => {
-            const batch = ann.batchId ? mockBatches.find((b) => b.id === ann.batchId) : null;
+            const batch = ann.batchId ? batches.find((b) => b.id === ann.batchId) : null;
             const isOwn = ann.createdBy === user?.uid;
             return (
               <Card key={ann.id}>
@@ -90,7 +125,7 @@ export function TeacherAnnouncements() {
                         </Badge>
                       ) : (
                         <Badge variant="default" size="sm">
-                          Batch: {batch?.name.split('—')[0].trim()}
+                          Batch: {batch?.name.split('—')[0].trim() || 'Unknown'}
                         </Badge>
                       )}
                       {ann.createdByRole === 'admin' && (
