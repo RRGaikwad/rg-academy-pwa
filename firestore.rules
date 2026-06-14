@@ -1,106 +1,90 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
     function isAuth() {
       return request.auth != null;
     }
-    function role() {
-      return request.auth.token.role;
+    
+    // The source of truth for all roles is now the users collection keyed by email
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.token.email)).data.role;
     }
-    function institute() {
-      return request.auth.token.instituteId;
+    
+    function isAdmin() {
+      return isAuth() && getUserRole() == 'admin';
     }
-    function isAdmin(instituteId) {
-      return isAuth() && role() == 'admin' && institute() == instituteId;
+    
+    function isTeacher() {
+      return isAuth() && getUserRole() == 'teacher';
     }
-    function isTeacher(instituteId) {
-      return isAuth() && role() == 'teacher' && institute() == instituteId;
+    
+    function isStudent() {
+      return isAuth() && getUserRole() == 'student';
     }
-    function isStudent(instituteId) {
-      return isAuth() && role() == 'student' && institute() == instituteId;
+    
+    function teacherOwnsBatch(batchId) {
+      return isTeacher() && batchId in get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.batchIds;
     }
-    function ownsTeacherDoc(teacherId) {
-      return isTeacher(institute()) && request.auth.uid == teacherId;
-    }
-    function ownsStudentDoc(studentId) {
-      return isStudent(institute()) && request.auth.uid == studentId;
-    }
-    function teacherOwnsBatch(instituteId, batchId) {
-      return isTeacher(instituteId) &&
-        batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds;
-    }
-    function studentEnrolledInBatch(instituteId, batchId) {
-      return isStudent(instituteId) &&
-        batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/students/$(request.auth.uid)).data.batchIds;
+    
+    function studentEnrolledInBatch(batchId) {
+      return isStudent() && batchId in get(/databases/$(database)/documents/students/$(request.auth.token.email)).data.batchIds;
     }
 
-    match /institutes/{instituteId} {
-      allow read: if isAuth() && institute() == instituteId;
-      allow write: if isAdmin(instituteId);
-      
-      match /students/{studentId} {
-        allow read: if isAdmin(instituteId) || ownsStudentDoc(studentId);
-        allow write: if isAdmin(instituteId);
-      }
-      
-      match /teachers/{teacherId} {
-        allow read: if isAdmin(instituteId) || ownsTeacherDoc(teacherId);
-        allow write: if isAdmin(instituteId);
-      }
-      
-      match /batches/{batchId} {
-        allow read: if isAdmin(instituteId) || teacherOwnsBatch(instituteId, batchId) || studentEnrolledInBatch(instituteId, batchId);
-        allow write: if isAdmin(instituteId);
-      }
-      
-      match /fees/{feeId} {
-        allow read: if isAdmin(instituteId) || (isStudent(instituteId) && resource.data.studentId == request.auth.uid);
-        allow write: if isAdmin(instituteId);
-      }
-      
-      match /exams/{examId} {
-        allow read: if isAdmin(instituteId) || 
-          (isTeacher(instituteId) && resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds) || 
-          (isStudent(instituteId) && resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/students/$(request.auth.uid)).data.batchIds);
-        allow create, update, delete: if isTeacher(instituteId) && request.resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds;
-      }
-      
-      match /submissions/{submissionId} {
-        allow read: if isAdmin(instituteId) || 
-          (isTeacher(instituteId) && resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds) || 
-          (isStudent(instituteId) && resource.data.studentId == request.auth.uid);
-        allow create: if isStudent(instituteId) && request.resource.data.studentId == request.auth.uid;
-        allow update: if isStudent(instituteId) && resource.data.studentId == request.auth.uid && request.resource.data.studentId == request.auth.uid;
-      }
-      
-      match /materials/{materialId} {
-        allow read: if isAdmin(instituteId) || 
-          (isTeacher(instituteId) && resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds) || 
-          (isStudent(instituteId) && (resource.data.scope == 'institute' || resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/students/$(request.auth.uid)).data.batchIds));
-        allow write: if isAdmin(instituteId) || 
-          (isTeacher(instituteId) && request.resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds);
-      }
-      
-      match /announcements/{annoId} {
-        allow read: if isAdmin(instituteId) || isTeacher(instituteId) || 
-          (isStudent(instituteId) && (resource.data.scope == 'institute' || resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/students/$(request.auth.uid)).data.batchIds));
-        allow write: if isAdmin(instituteId) || 
-          (isTeacher(instituteId) && request.resource.data.batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds);
-      }
-      
-      match /leaderboard/{batchId} {
-        allow read: if isAdmin(instituteId) || 
-          (isTeacher(instituteId) && batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds) || 
-          (isStudent(instituteId) && batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/students/$(request.auth.uid)).data.batchIds) || 
-          batchId == 'institute';
-        allow write: if false; // written by functions only
-      }
-      
-      match /attendance/{batchId}/records/{date} {
-        allow read: if isAdmin(instituteId) || 
-          (isTeacher(instituteId) && batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds);
-        allow write: if isTeacher(instituteId) && batchId in get(/databases/$(database)/documents/institutes/$(instituteId)/teachers/$(request.auth.uid)).data.batchIds;
-      }
+    match /users/{emailId} {
+      allow read: if isAuth() && (request.auth.token.email == emailId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    match /teachers/{emailId} {
+      allow read: if isAuth(); 
+      allow write: if isAdmin();
+    }
+
+    match /students/{emailId} {
+      allow read: if isAuth(); 
+      allow write: if isAdmin();
+    }
+
+    match /batches/{batchId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /fees/{feeId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /exams/{examId} {
+      allow read: if isAuth();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    match /submissions/{subId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && isStudent();
+      allow update, delete: if isAuth() && (isAdmin() || isTeacher());
+    }
+
+    match /materials/{matId} {
+      allow read: if isAuth();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    match /announcements/{annId} {
+      allow read: if isAuth();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    match /leaderboard/{batchId} {
+      allow read: if isAuth();
+      allow write: if isAuth(); 
+    }
+
+    match /attendance/{recordId} {
+      allow read: if isAuth();
+      allow write: if isAdmin() || isTeacher();
     }
   }
 }

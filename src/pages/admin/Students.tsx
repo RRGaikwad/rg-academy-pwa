@@ -9,7 +9,7 @@ import { EmptyState } from '../../components/shared/EmptyState';
 import { Plus, Search, UserCheck, UserX, GraduationCap, Phone, Mail, Edit } from 'lucide-react';
 import { useFirestoreCollection } from '../../hooks/useFirestore';
 import { db } from '../../firebase/config';
-import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import type { Student, FeeType, Batch } from '../../types';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -17,7 +17,7 @@ import toast from 'react-hot-toast';
 export function AdminStudents() {
   const { data: students, loading: loadingStudents } = useFirestoreCollection<Student>('students');
   const { data: batches } = useFirestoreCollection<Batch>('batches');
-  
+
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
@@ -28,7 +28,6 @@ export function AdminStudents() {
     name: '',
     email: '',
     phone: '',
-    password: '',
     batchIds: [] as string[],
     cycleType: 'monthly' as FeeType,
     amount: '',
@@ -37,7 +36,9 @@ export function AdminStudents() {
   const filtered = students.filter((s) => {
     const q = search.toLowerCase();
     const matchSearch =
-      s.name.toLowerCase().includes(q) || s.email.toLowerCase().includes(q) || (s.phone && s.phone.includes(q));
+      s.name.toLowerCase().includes(q) ||
+      s.email.toLowerCase().includes(q) ||
+      (s.phone && s.phone.includes(q));
     const matchStatus =
       filterStatus === 'all' ||
       (filterStatus === 'active' && s.isActive) ||
@@ -51,7 +52,6 @@ export function AdminStudents() {
       name: '',
       email: '',
       phone: '',
-      password: '',
       batchIds: [],
       cycleType: 'monthly',
       amount: '',
@@ -65,7 +65,6 @@ export function AdminStudents() {
       name: s.name,
       email: s.email,
       phone: s.phone || '',
-      password: '',
       batchIds: s.batchIds || [],
       cycleType: s.feeConfig?.cycleType || 'monthly',
       amount: s.feeConfig?.amount?.toString() || '0',
@@ -91,6 +90,7 @@ export function AdminStudents() {
         toast.success('Student updated successfully', { id: tId });
       } else {
         const newStudent = {
+          uid: form.email,
           name: form.name,
           email: form.email,
           phone: form.phone,
@@ -100,8 +100,15 @@ export function AdminStudents() {
           enrolledAt: new Date().toISOString(),
           createdBy: 'admin_001',
         };
-        await addDoc(collection(db, 'students'), newStudent);
-        toast.success('Student created successfully', { id: tId });
+        await setDoc(doc(db, 'students', form.email), newStudent);
+        await setDoc(doc(db, 'users', form.email), {
+          uid: form.email,
+          name: form.name,
+          email: form.email,
+          role: 'student',
+          isActive: true,
+        });
+        toast.success('Student whitelisted. They can now login with Google.', { id: tId });
       }
       setModalOpen(false);
     } catch (err: any) {
@@ -113,7 +120,9 @@ export function AdminStudents() {
     if (!student.uid && !student.uid) return;
     const tId = toast.loading('Updating status...');
     try {
-      await updateDoc(doc(db, 'students', student.uid || student.uid!), { isActive: !student.isActive });
+      await updateDoc(doc(db, 'students', student.uid || student.uid!), {
+        isActive: !student.isActive,
+      });
       toast.success('Student status updated', { id: tId });
     } catch (err: any) {
       toast.error(err.message || 'Failed to update', { id: tId });
@@ -170,7 +179,9 @@ export function AdminStudents() {
       {/* Students Table */}
       <Card padding="none">
         {loadingStudents ? (
-          <div className="flex justify-center p-8"><p className="text-slate-500">Loading...</p></div>
+          <div className="flex justify-center p-8">
+            <p className="text-slate-500">Loading...</p>
+          </div>
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={<GraduationCap size={48} />}
@@ -209,9 +220,14 @@ export function AdminStudents() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filtered.map((student) => {
-                  const studentBatches = batches.filter((b) => (student.batchIds || []).includes(b.id || ''));
+                  const studentBatches = batches.filter((b) =>
+                    (student.batchIds || []).includes(b.id || ''),
+                  );
                   return (
-                    <tr key={student.uid || student.uid} className="hover:bg-slate-50 transition-colors">
+                    <tr
+                      key={student.uid || student.uid}
+                      className="hover:bg-slate-50 transition-colors"
+                    >
                       <td className="py-3 px-4">
                         <div
                           className="flex items-center gap-3 cursor-pointer"
@@ -259,7 +275,9 @@ export function AdminStudents() {
                         </div>
                       </td>
                       <td className="py-3 px-4 hidden lg:table-cell text-xs text-slate-500">
-                        {student.enrolledAt ? format(new Date(student.enrolledAt), 'MMM d, yyyy') : 'Unknown'}
+                        {student.enrolledAt
+                          ? format(new Date(student.enrolledAt), 'MMM d, yyyy')
+                          : 'Unknown'}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <Badge variant={student.isActive ? 'success' : 'neutral'} size="sm">
@@ -333,16 +351,10 @@ export function AdminStudents() {
             placeholder="student@email.com"
             required
           />
-          {!editStudent && (
-            <Input
-              label="Initial Password"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              placeholder="Set a temporary password"
-              required
-            />
-          )}
+          <div className="p-3 bg-blue-50 rounded-lg text-xs text-blue-800 border border-blue-200">
+            <strong>Note:</strong> The student can log in instantly using the "Continue with Google"
+            button with this exact Gmail address. No password needed!
+          </div>
 
           {/* Batch Assignment */}
           <div>
@@ -452,7 +464,9 @@ export function AdminStudents() {
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div>
                   <span className="text-slate-500">Cycle:</span>{' '}
-                  <span className="font-medium capitalize">{viewStudent.feeConfig?.cycleType || 'N/A'}</span>
+                  <span className="font-medium capitalize">
+                    {viewStudent.feeConfig?.cycleType || 'N/A'}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-500">Amount:</span>{' '}
@@ -463,7 +477,9 @@ export function AdminStudents() {
                 <div>
                   <span className="text-slate-500">Enrolled:</span>{' '}
                   <span className="font-medium">
-                    {viewStudent.enrolledAt ? format(new Date(viewStudent.enrolledAt), 'MMM d, yyyy') : 'Unknown'}
+                    {viewStudent.enrolledAt
+                      ? format(new Date(viewStudent.enrolledAt), 'MMM d, yyyy')
+                      : 'Unknown'}
                   </span>
                 </div>
               </div>

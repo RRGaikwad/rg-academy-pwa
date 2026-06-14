@@ -9,7 +9,7 @@ import { EmptyState } from '../../components/shared/EmptyState';
 import { Plus, Search, Users, Mail, Phone, BookOpen, Edit, UserCheck, UserX } from 'lucide-react';
 import { useFirestoreCollection } from '../../hooks/useFirestore';
 import { db } from '../../firebase/config';
-import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import type { Teacher, Batch } from '../../types';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -27,7 +27,6 @@ export function AdminTeachers() {
     email: '',
     phone: '',
     subject: '',
-    password: '',
   });
 
   const filtered = teachers.filter((t) => {
@@ -41,7 +40,7 @@ export function AdminTeachers() {
 
   const openAdd = () => {
     setEditTeacher(null);
-    setForm({ name: '', email: '', phone: '', subject: '', password: '' });
+    setForm({ name: '', email: '', phone: '', subject: '' });
     setModalOpen(true);
   };
 
@@ -52,7 +51,6 @@ export function AdminTeachers() {
       email: t.email,
       phone: t.phone || '',
       subject: t.subject,
-      password: '',
     });
     setModalOpen(true);
   };
@@ -74,6 +72,7 @@ export function AdminTeachers() {
         toast.success('Teacher updated', { id: tId });
       } else {
         const newTeacher = {
+          uid: form.email,
           name: form.name,
           email: form.email,
           phone: form.phone,
@@ -83,8 +82,15 @@ export function AdminTeachers() {
           createdBy: 'admin_001',
           createdAt: new Date().toISOString(),
         };
-        await addDoc(collection(db, 'teachers'), newTeacher);
-        toast.success('Teacher account created. Credentials sent via email.', { id: tId });
+        await setDoc(doc(db, 'teachers', form.email), newTeacher);
+        await setDoc(doc(db, 'users', form.email), {
+          uid: form.email,
+          name: form.name,
+          email: form.email,
+          role: 'teacher',
+          isActive: true,
+        });
+        toast.success('Teacher whitelisted. They can now login with Google.', { id: tId });
       }
       setModalOpen(false);
     } catch (err: any) {
@@ -267,20 +273,9 @@ export function AdminTeachers() {
             required
           />
           {!editTeacher && (
-            <Input
-              label="Temporary Password"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              placeholder="Set initial password"
-              required
-              hint="Teacher must change this on first login"
-            />
-          )}
-          {!editTeacher && (
             <div className="p-3 bg-blue-50 rounded-lg text-xs text-blue-800 border border-blue-200">
-              <strong>Note:</strong> Login credentials will be communicated to the teacher. They
-              will be able to log in immediately after account creation.
+              <strong>Note:</strong> The teacher can now log in instantly using the "Continue with
+              Google" button with this exact Gmail address. No password needed!
             </div>
           )}
         </div>

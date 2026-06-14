@@ -15,7 +15,8 @@ export function setupAuthListener() {
         let instituteId = 'rg_academy_id';
         let name = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User';
 
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        if (!firebaseUser.email) throw new Error('No email found in token');
+        const userDocRef = doc(db, 'users', firebaseUser.email);
         const userDocSnap = await getDoc(userDocRef);
 
         if (userDocSnap.exists()) {
