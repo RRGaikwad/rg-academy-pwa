@@ -21,17 +21,29 @@ export function LoginPage() {
       const userCredential = await signInWithPopup(auth, provider);
 
       const userEmail = userCredential.user.email;
-      if (!userEmail) throw new Error('No email found from Google');
+      if (!userEmail) throw new Error('No email found from Google.');
 
-      const userDocRef = doc(db, 'users', userEmail);
-      const userDocSnap = await getDoc(userDocRef);
-
-      if (!userDocSnap.exists()) {
-        await auth.signOut();
-        throw new Error('Unauthorized: This email is not registered with RG Academy.');
+      let role = 'none';
+      try {
+        const userDocRef = doc(db, 'users', userEmail);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          role = userDocSnap.data().role || 'none';
+        }
+      } catch (firestoreErr: unknown) {
+        // Firestore permission error = document doesn't exist OR rules denied.
+        // Both cases mean this email is not authorised.
+        console.warn('Firestore lookup failed:', firestoreErr);
+        role = 'none';
       }
 
-      const role = userDocSnap.data().role || 'student';
+      if (role === 'none') {
+        await auth.signOut();
+        throw new Error(
+          'Access Denied: Your Google account is not registered with RG Academy. ' +
+            'Please contact the administrator.',
+        );
+      }
 
       switch (role) {
         case 'admin':
@@ -44,12 +56,17 @@ export function LoginPage() {
           navigate('/student/dashboard');
           break;
         default:
-          navigate('/student/dashboard');
-          break;
+          await auth.signOut();
+          throw new Error('Unknown role. Please contact the administrator.');
       }
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : 'Invalid email or password. Please try again.');
+      // Google popup closed by user — don't show an error
+      if (err instanceof Error && err.message.includes('popup-closed-by-user')) {
+        setError('');
+      } else {
+        setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }
