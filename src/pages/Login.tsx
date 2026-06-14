@@ -1,28 +1,24 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, AlertCircle, Loader2 } from 'lucide-react';
-import { GoogleAuthProvider } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 
 export function LoginPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isCheckingRedirect, setIsCheckingRedirect] = useState(true);
-  const signingInRef = useRef(false); // synchronous guard — prevents double-click
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const signingInRef = useRef(false);
   const navigate = useNavigate();
 
-  // Helper: look up role in Firestore and navigate to the right dashboard
+  // ─── Role lookup ────────────────────────────────────────────────────────────
   const handleUserRole = async (userEmail: string) => {
     let role = 'none';
     try {
-      const userDocRef = doc(db, 'users', userEmail);
-      const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists()) {
-        role = userDocSnap.data().role || 'none';
-      }
-    } catch (firestoreErr: unknown) {
-      console.warn('Firestore lookup failed:', firestoreErr);
+      const snap = await getDoc(doc(db, 'users', userEmail));
+      if (snap.exists()) role = snap.data().role || 'none';
+    } catch {
       role = 'none';
     }
 
@@ -36,13 +32,13 @@ export function LoginPage() {
 
     switch (role) {
       case 'admin':
-        navigate('/admin/dashboard');
+        navigate('/admin/dashboard', { replace: true });
         break;
       case 'teacher':
-        navigate('/teacher/dashboard');
+        navigate('/teacher/dashboard', { replace: true });
         break;
       case 'student':
-        navigate('/student/dashboard');
+        navigate('/student/dashboard', { replace: true });
         break;
       default:
         await auth.signOut();
@@ -50,40 +46,36 @@ export function LoginPage() {
     }
   };
 
-  // On mount: check if the auth listener already has a signed-in user
-  // (handles post-redirect state from Firebase)
+  // ─── Auth state listener ─────────────────────────────────────────────────────
+  // This is the source of truth for navigation.  Even if signInWithPopup's
+  // promise never settles (a known Firebase + browser issue), the moment
+  // Firebase persists the user to localStorage the listener fires and we navigate.
   useEffect(() => {
-    const checkExistingAuth = async () => {
-      setIsCheckingRedirect(true);
-      try {
-        // Wait briefly for Firebase to restore auth state from local storage
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        const user = auth.currentUser;
-        if (user && user.email) {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user?.email) {
+        setIsLoading(true);
+        try {
           await handleUserRole(user.email);
-          return;
+        } catch (err) {
+          await auth.signOut();
+          setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+          setIsLoading(false);
+          signingInRef.current = false;
         }
-        // Also check redirect result (for browsers that support it)
-        const { getRedirectResult } = await import('firebase/auth');
-        const result = await getRedirectResult(auth);
-        if (result?.user?.email) {
-          await handleUserRole(result.user.email);
-        }
-      } catch (err) {
-        console.error(err);
-        setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
-      } finally {
-        setIsCheckingRedirect(false);
+      } else {
+        // No user signed in — show the login button
+        setIsCheckingAuth(false);
+        setIsLoading(false);
+        signingInRef.current = false;
       }
-    };
-
-    checkExistingAuth();
+    });
+    return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Primary sign-in: signInWithPopup with a strict single-execution guard
+  // ─── Button handler ──────────────────────────────────────────────────────────
   const handleLogin = async () => {
-    // Synchronous guard — prevents any second call regardless of React state timing
+    // Synchronous guard: prevent double-click / double popup
     if (signingInRef.current) return;
     signingInRef.current = true;
 
@@ -91,45 +83,33 @@ export function LoginPage() {
     setIsLoading(true);
 
     try {
-      const { signInWithPopup } = await import('firebase/auth');
       const provider = new GoogleAuthProvider();
-      provider.addScope('email');
-      provider.addScope('profile');
       provider.setCustomParameters({ prompt: 'select_account' });
-
-      const result = await signInWithPopup(auth, provider);
-      const userEmail = result.user.email;
-      if (!userEmail) throw new Error('No email returned from Google.');
-      await handleUserRole(userEmail);
+      await signInWithPopup(auth, provider);
+      // ✅ onAuthStateChanged above handles navigation — nothing else needed here
     } catch (err: unknown) {
-      const firebaseErr = err as { code?: string; message?: string };
-      if (
-        firebaseErr.code === 'auth/popup-closed-by-user' ||
-        firebaseErr.code === 'auth/cancelled-popup-request'
-      ) {
-        // User closed the popup — not an error, just reset
-        setError('');
-      } else if (firebaseErr.code === 'auth/popup-blocked') {
-        // Browser blocked the popup — fall back to redirect
-        setError('');
-        try {
-          const { signInWithRedirect } = await import('firebase/auth');
-          const provider = new GoogleAuthProvider();
-          provider.setCustomParameters({ prompt: 'select_account' });
-          await signInWithRedirect(auth, provider);
-          return; // page will navigate away
-        } catch (redirectErr) {
-          setError('Sign-in failed. Please allow popups for this site and try again.');
-        }
-      } else {
-        setError(firebaseErr.message || 'Sign-in failed. Please try again.');
-      }
-    } finally {
+      // Reset immediately so the user can try again
       signingInRef.current = false;
       setIsLoading(false);
+
+      const code = (err as { code?: string }).code ?? '';
+      const message = (err as { message?: string }).message ?? '';
+
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        // User dismissed the popup — not an error, just reset silently
+        setError('');
+      } else if (code === 'auth/popup-blocked') {
+        setError(
+          'The sign-in popup was blocked by your browser. ' +
+            'Click the blocked-popup icon (🚫) in your address bar → "Always allow popups for this site" → then try again.',
+        );
+      } else {
+        setError(message || 'Sign-in failed. Please try again.');
+      }
     }
   };
 
+  // ─── UI ──────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#1A3C5E] via-[#15314e] to-[#0f2237] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -142,15 +122,16 @@ export function LoginPage() {
           <p className="text-white/60 text-sm mt-1">NEET / JEE Coaching Management</p>
         </div>
 
-        {/* Login Card */}
+        {/* Card */}
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <h2 className="text-xl font-semibold text-slate-900 mb-1">Welcome back</h2>
           <p className="text-sm text-slate-500 mb-6">Sign in with your Google Account</p>
 
-          {isCheckingRedirect ? (
+          {/* Checking existing auth or completing sign-in */}
+          {isCheckingAuth ? (
             <div className="flex flex-col items-center gap-3 py-4">
               <Loader2 className="animate-spin text-[#1A3C5E]" size={32} />
-              <p className="text-sm text-slate-500">Completing sign-in…</p>
+              <p className="text-sm text-slate-500">Checking session…</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -165,36 +146,37 @@ export function LoginPage() {
                 id="google-signin-btn"
                 onClick={handleLogin}
                 disabled={isLoading}
-                className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border-2 border-slate-200 rounded-xl text-slate-700 font-medium text-sm hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border-2 border-slate-200 rounded-xl text-slate-700 font-semibold text-sm hover:bg-slate-50 hover:border-slate-300 active:scale-[0.98] transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
-                  <Loader2 className="animate-spin" size={20} />
+                  <>
+                    <Loader2 className="animate-spin flex-shrink-0" size={20} />
+                    <span>Signing in…</span>
+                  </>
                 ) : (
-                  <svg className="w-5 h-5" viewBox="0 0 24 24">
-                    <path
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      fill="#4285F4"
-                    />
-                    <path
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      fill="#34A853"
-                    />
-                    <path
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                      fill="#FBBC05"
-                    />
-                    <path
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                      fill="#EA4335"
-                    />
-                  </svg>
+                  <>
+                    <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+                      <path
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                        fill="#4285F4"
+                      />
+                      <path
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                        fill="#34A853"
+                      />
+                      <path
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                        fill="#FBBC05"
+                      />
+                      <path
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                        fill="#EA4335"
+                      />
+                    </svg>
+                    <span>Continue with Google</span>
+                  </>
                 )}
-                {isLoading ? 'Signing in…' : 'Continue with Google'}
               </button>
-
-              <p className="text-center text-xs text-slate-400 mt-2">
-                A Google sign-in window will appear. Please allow popups for this site if prompted.
-              </p>
             </div>
           )}
         </div>
