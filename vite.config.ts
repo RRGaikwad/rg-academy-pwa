@@ -43,6 +43,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // ✅ CRITICAL FIX: Prevent Service Worker from hijacking Firebase Auth popup
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/__/],
         runtimeCaching: [
           {
             // Study materials (Firebase Storage) - Cache First
