@@ -14,19 +14,29 @@ export function LoginPage() {
 
   // ─── Role lookup ────────────────────────────────────────────────────────────
   const handleUserRole = async (userEmail: string) => {
-    let role = 'none';
+    let role: string;
     try {
       const snap = await getDoc(doc(db, 'users', userEmail));
-      if (snap.exists()) role = snap.data().role || 'none';
-    } catch {
-      role = 'none';
+      if (!snap.exists()) {
+        throw new Error(`DOC_NOT_FOUND`);
+      }
+      role = snap.data().role || 'none';
+    } catch (err: unknown) {
+      const firestoreErr = err as Error;
+      if (firestoreErr.message === 'DOC_NOT_FOUND') {
+        throw new Error(
+          `Account Not Found: There is no Firestore document for "${userEmail}". ` +
+            `Please check Firestore and make sure the Document ID is EXACTLY "${userEmail}" with no trailing spaces.`,
+          { cause: err },
+        );
+      }
+      throw new Error(`Firestore Error: ${firestoreErr.message}`, { cause: err });
     }
 
     if (role === 'none') {
       await auth.signOut();
       throw new Error(
-        'Access Denied: Your Google account is not registered with RG Academy. ' +
-          'Please contact the administrator.',
+        `Access Denied: The user document for "${userEmail}" is missing the "role" field, or it is set to "none".`,
       );
     }
 
@@ -42,7 +52,7 @@ export function LoginPage() {
         break;
       default:
         await auth.signOut();
-        throw new Error('Unknown role. Please contact the administrator.');
+        throw new Error(`Unknown role "${role}". Please contact the administrator.`);
     }
   };
 
