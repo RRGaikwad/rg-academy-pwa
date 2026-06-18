@@ -84,23 +84,26 @@ export function LoginPage() {
 
     try {
       // ─── PWA Hanging Popup Watchdog ──────────────────────────────────────────
-      // In some PWA environments, closing the popup doesn't reject the promise.
-      // We listen for the main window regaining focus to manually reset the state.
       const onWindowFocus = () => {
         setTimeout(() => {
           if (signingInRef.current) {
             signingInRef.current = false;
             setIsLoading(false);
+            setError('The sign-in process was interrupted or timed out. Please try again.');
           }
-        }, 2000); // 2 second grace period after returning to main window
+        }, 4000); // 4 seconds grace period
       };
       window.addEventListener('focus', onWindowFocus, { once: true });
 
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, provider);
-      // ✅ onAuthStateChanged above handles navigation — nothing else needed here
+      const result = await signInWithPopup(auth, provider);
+
+      // ✅ Directly handle the login result instead of waiting for the listener
       window.removeEventListener('focus', onWindowFocus);
+      if (result?.user?.email) {
+        await handleUserRole(result.user.email);
+      }
     } catch (err: unknown) {
       // Reset immediately so the user can try again
       signingInRef.current = false;
@@ -110,8 +113,7 @@ export function LoginPage() {
       const message = (err as { message?: string }).message ?? '';
 
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        // User dismissed the popup — not an error, just reset silently
-        setError('');
+        setError('Sign-in popup was closed before completing. Please try again.');
       } else if (code === 'auth/popup-blocked') {
         setError(
           'The sign-in popup was blocked by your browser. ' +
