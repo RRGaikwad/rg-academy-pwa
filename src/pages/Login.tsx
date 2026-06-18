@@ -83,10 +83,24 @@ export function LoginPage() {
     setIsLoading(true);
 
     try {
+      // ─── PWA Hanging Popup Watchdog ──────────────────────────────────────────
+      // In some PWA environments, closing the popup doesn't reject the promise.
+      // We listen for the main window regaining focus to manually reset the state.
+      const onWindowFocus = () => {
+        setTimeout(() => {
+          if (signingInRef.current) {
+            signingInRef.current = false;
+            setIsLoading(false);
+          }
+        }, 2000); // 2 second grace period after returning to main window
+      };
+      window.addEventListener('focus', onWindowFocus, { once: true });
+
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, provider);
       // ✅ onAuthStateChanged above handles navigation — nothing else needed here
+      window.removeEventListener('focus', onWindowFocus);
     } catch (err: unknown) {
       // Reset immediately so the user can try again
       signingInRef.current = false;
