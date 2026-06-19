@@ -1,4 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
+import { auth } from '../firebase/config';
 import { cn } from '../utils/cn';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
@@ -73,9 +74,13 @@ export function Sidebar({ role }: SidebarProps) {
   const navigate = useNavigate();
   const items = navItems[role];
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      await auth.signOut(); // ✅ Clear Firebase session first
+    } finally {
+      logout(); // Then clear Zustand state
+      navigate('/login', { replace: true });
+    }
   };
 
   const sidebarContent = (

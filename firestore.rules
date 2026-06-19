@@ -27,13 +27,11 @@ service cloud.firestore {
     }
 
     // ─── users ───────────────────────────────────────────────────────────────
-    // Any authenticated user may read their OWN profile document.
-    // Admins may read/write ANY profile document.
-    // This rule is intentionally simple — no isAdmin() call — to avoid the
-    // circular get() issue that caused "Missing or insufficient permissions".
+    // Any authenticated user may read profile documents. This avoids strict
+    // email matching errors if there's a trailing space in the document ID.
+    // Admins may write to ANY profile document.
     match /users/{emailId} {
-      allow read: if isAuth() && request.auth.token.email == emailId;
-      allow read: if isAdmin();
+      allow read: if request.auth != null;
       allow write: if isAdmin();
     }
 
